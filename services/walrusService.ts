@@ -3,14 +3,15 @@ export type WalrusNetwork = 'TESTNET' | 'MAINNET';
 
 const WALRUS_CONFIG = {
   TESTNET: {
-    PUBLISHER: "https://publisher.walrus-testnet.walrus.space",
-    AGGREGATOR: "https://aggregator.walrus-testnet.walrus.space"
+    // Using Devnet endpoints as they are the standard for development/hackathons
+    PUBLISHER: "https://publisher-devnet.walrus.space",
+    AGGREGATOR: "https://aggregator-devnet.walrus.space"
   },
   MAINNET: {
-    // Official Mainnet Publisher (requires payment/auth usually)
-    // You may need to replace this with your own private publisher node if using Mainnet
-    PUBLISHER: "https://publisher.walrus.site", 
-    AGGREGATOR: "https://aggregator.walrus.site"
+    // Official Mainnet Endpoints
+    // Note: Mainnet publishers often require authentication/payment headers not present in this public demo
+    PUBLISHER: "https://publisher.walrus.space", 
+    AGGREGATOR: "https://aggregator.walrus.space"
   }
 };
 
@@ -38,7 +39,10 @@ export const uploadToWalrus = async (
   network: WalrusNetwork = 'TESTNET'
 ): Promise<{ blobId: string; url: string }> => {
   
-  const publisherUrl = `${WALRUS_CONFIG[network].PUBLISHER}/v1/store?epochs=5`; // Store for 5 epochs by default
+  // We remove explicit epoch params to rely on system defaults (usually 1 epoch) for maximum compatibility
+  const publisherUrl = `${WALRUS_CONFIG[network].PUBLISHER}/v1/store`; 
+
+  console.log(`[Walrus] Uploading to ${publisherUrl}...`);
 
   try {
     const response = await fetch(publisherUrl, {
