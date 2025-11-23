@@ -23,57 +23,110 @@ interface StandardWallet {
   };
 }
 
-// Extend window interface
+// Global Window Augmentation
 declare global {
   interface Window {
     suiWallet?: LegacySuiWalletProvider;
-    suiet?: any; // Support for SuiET wallet
-    sui?: any; // Generic injection
+    suiet?: any; 
+    sui?: any; 
   }
   interface Navigator {
     getWallets?: () => StandardWallet[];
   }
 }
 
+// --- WALLET DETECTION LOGIC ---
+
+// Cache discovered wallets to avoid losing them
+let detectedWallets: StandardWallet[] = [];
+
+// Listener for the 'standard:register-wallet' event
+if (typeof window !== 'undefined') {
+  window.addEventListener('wallet-standard:register-wallet', (event: any) => {
+    const registerCallback = event.detail;
+    registerCallback({
+      register: (wallet: StandardWallet) => {
+        if (!detectedWallets.find(w => w.name === wallet.name)) {
+          detectedWallets.push(wallet);
+        }
+      }
+    });
+  });
+}
+
 /**
- * Checks if ANY compatible Sui wallet is installed via Standard or Legacy methods.
+ * Helpers to find wallets in the environment
  */
-export const checkSuiWalletInstalled = (): boolean => {
-  if (typeof window === 'undefined') return false;
+const getStandardWallets = (): StandardWallet[] => {
+  // 1. Check cache from event listeners
+  let all = [...detectedWallets];
 
-  // 1. Check Wallet Standard
+  // 2. Check navigator.getWallets() if available
   if (navigator.getWallets) {
-    const wallets = navigator.getWallets();
-    const hasSuiWallet = wallets.some(w => w.name.toLowerCase().includes('sui'));
-    if (hasSuiWallet) return true;
+    const navWallets = navigator.getWallets();
+    navWallets.forEach(w => {
+      if (!all.find(existing => existing.name === w.name)) {
+        all.push(w);
+      }
+    });
   }
+  return all;
+};
 
-  // 2. Check Legacy Injections
+const hasLegacyWallet = () => {
   return !!(window.suiWallet || window.suiet || window.sui);
 };
 
 /**
+ * Checks if wallet is installed (Non-blocking check)
+ */
+export const checkSuiWalletInstalled = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  const standard = getStandardWallets().some(w => w.name.toLowerCase().includes('sui'));
+  return standard || hasLegacyWallet();
+};
+
+/**
+ * Waits for a wallet to appear (up to 2 seconds) to handle race conditions.
+ */
+const waitForWallet = async (retries = 10, delay = 200): Promise<boolean> => {
+  for (let i = 0; i < retries; i++) {
+    if (checkSuiWalletInstalled()) return true;
+    await new Promise(resolve => setTimeout(resolve, delay));
+  }
+  return false;
+};
+
+/**
  * Connects to the wallet using the best available method.
+ * Includes a retry mechanism for initial injection delay.
  */
 export const connectSuiWallet = async (): Promise<string | null> => {
   try {
-    // STRATEGY 1: Wallet Standard (Preferred for Official Sui Wallet)
-    if (navigator.getWallets) {
-      const wallets = navigator.getWallets();
-      // Find the official Sui Wallet or any wallet with 'Sui' in name
-      const targetWallet = wallets.find(w => w.name === 'Sui Wallet') || 
-                           wallets.find(w => w.name.toLowerCase().includes('sui'));
-      
-      if (targetWallet && targetWallet.features['standard:connect']) {
-        console.log(`Connecting via Standard to: ${targetWallet.name}`);
+    // 1. Wait for injection (Fixes "Extension not installed" race condition)
+    const isInstalled = await waitForWallet();
+    if (!isInstalled) {
+       throw new Error("Sui Wallet extension not found after waiting.");
+    }
+
+    // 2. Try Standard Connection (Preferred)
+    const standardWallets = getStandardWallets();
+    const targetWallet = standardWallets.find(w => w.name === 'Sui Wallet') || 
+                         standardWallets.find(w => w.name.toLowerCase().includes('sui'));
+
+    if (targetWallet && targetWallet.features['standard:connect']) {
+      console.log(`Connecting via Standard to: ${targetWallet.name}`);
+      try {
         const result = await targetWallet.features['standard:connect'].connect();
         if (result.accounts && result.accounts.length > 0) {
           return result.accounts[0].address;
         }
+      } catch (err) {
+        console.warn("Standard connect failed, trying legacy...", err);
       }
     }
 
-    // STRATEGY 2: Legacy window.suiWallet (Older versions)
+    // 3. Try Legacy window.suiWallet
     if (window.suiWallet) {
       console.log("Connecting via Legacy suiWallet...");
       const hasPermissions = await window.suiWallet.requestPermissions();
@@ -83,21 +136,14 @@ export const connectSuiWallet = async (): Promise<string | null> => {
       }
     }
 
-    // STRATEGY 3: SuiET Wallet
+    // 4. Try SuiET
     if (window.suiet) {
       console.log("Connecting via SuiET...");
       const result = await window.suiet.connect();
-      if (result && result.data && result.data.length > 0) {
-        return result.data[0]; // SuiET returns address directly in data array sometimes
-      }
+      if (result?.data?.[0]) return result.data[0];
     }
 
-    // If we reached here, we found a provider but failed to connect or user rejected
-    if (checkSuiWalletInstalled()) {
-       throw new Error("User rejected connection or wallet did not return accounts.");
-    } else {
-       throw new Error("Sui Wallet extension not found");
-    }
+    throw new Error("Wallet found but connection failed or was rejected.");
 
   } catch (error) {
     console.error("Wallet Connection Error:", error);
@@ -108,21 +154,17 @@ export const connectSuiWallet = async (): Promise<string | null> => {
 export const disconnectSuiWallet = async (): Promise<void> => {
   try {
     // Try Standard Disconnect
-    if (navigator.getWallets) {
-       const wallets = navigator.getWallets();
-       const target = wallets.find(w => w.name === 'Sui Wallet');
-       if (target && target.features['standard:disconnect']) {
-         await target.features['standard:disconnect'].disconnect();
-         return;
-       }
+    const standardWallets = getStandardWallets();
+    const target = standardWallets.find(w => w.name === 'Sui Wallet');
+    if (target?.features?.['standard:disconnect']) {
+       await target.features['standard:disconnect'].disconnect();
+       return;
     }
     
     // Try Legacy Disconnect
-    if (window.suiWallet) {
-      await window.suiWallet.disconnect();
-    } else if (window.suiet) {
-      await window.suiet.disconnect();
-    }
+    if (window.suiWallet) await window.suiWallet.disconnect();
+    else if (window.suiet) await window.suiet.disconnect();
+    
   } catch (e) {
     console.warn("Disconnect failed or not supported", e);
   }

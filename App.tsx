@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { ViewMode, PlantDataPoint, MOCK_BLOBS, DataBlob } from './types';
 import { analyzeDatasetValue } from './services/geminiService';
 import { uploadToWalrus, WalrusNetwork } from './services/walrusService';
-import { connectSuiWallet, checkSuiWalletInstalled, disconnectSuiWallet } from './services/suiWalletService';
+import { connectSuiWallet, disconnectSuiWallet } from './services/suiWalletService';
 import DeviceMonitor from './components/DeviceMonitor';
 import DataMarketplace from './components/DataMarketplace';
 import Modal from './components/Modal';
@@ -51,11 +51,9 @@ const App: React.FC = () => {
       return;
     }
 
-    if (!checkSuiWalletInstalled()) {
-      alert("Sui Wallet extension is not installed! Please install it from the Chrome Web Store to connect.");
-      window.open("https://chrome.google.com/webstore/detail/sui-wallet/opcgpfmipidbgpenhmajoajpbnyfyjmg", "_blank");
-      return;
-    }
+    // NOTE: We do NOT check checkSuiWalletInstalled() here immediately.
+    // We let the connectSuiWallet service handle the "wait and retry" logic
+    // to fix race conditions where the extension loads slightly after the app.
 
     try {
       setIsConnecting(true);
@@ -65,9 +63,14 @@ const App: React.FC = () => {
       } else {
         alert("Connection rejected by user.");
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      alert("Failed to connect wallet.");
+      if (error.message && error.message.includes("extension not found")) {
+         alert("Sui Wallet extension is not installed! Please install it from the Chrome Web Store to connect.");
+         window.open("https://chrome.google.com/webstore/detail/sui-wallet/opcgpfmipidbgpenhmajoajpbnyfyjmg", "_blank");
+      } else {
+         alert("Failed to connect wallet: " + error.message);
+      }
     } finally {
       setIsConnecting(false);
     }
