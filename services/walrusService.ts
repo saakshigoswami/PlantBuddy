@@ -40,7 +40,7 @@ export const uploadToWalrus = async (
 ): Promise<{ blobId: string; url: string }> => {
   
   // We remove explicit epoch params to rely on system defaults (usually 1 epoch) for maximum compatibility
-  const publisherUrl = `${WALRUS_CONFIG[network].PUBLISHER}/v1/store`; 
+  const publisherUrl = `${WALRUS_CONFIG[network].PUBLISHER}/v1/blobs`; 
 
   console.log(`[Walrus] Uploading to ${publisherUrl}...`);
 
