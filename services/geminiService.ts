@@ -1,12 +1,26 @@
 
-import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 
-// Initialize with the environment key (provided by the platform)
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const HARDCODED_KEY = 'AIzaSyBC5wpd9XG6luOHGCBL4T1F-F3FeoRDAOE';
+
+// Helper to get the best available API Key
+const getApiKey = (): string | undefined => {
+  // 1. Check Local Storage (User override)
+  const localKey = localStorage.getItem('GEMINI_API_KEY');
+  if (localKey && localKey.trim().length > 0) return localKey;
+  
+  // 2. Check Environment Variable (Preview environment)
+  if (process.env.API_KEY && process.env.API_KEY !== 'undefined') {
+    return process.env.API_KEY;
+  }
+  
+  // 3. Fallback to provided key
+  return HARDCODED_KEY;
+};
 
 // System instruction: SOFT & GENTLE FRIEND
 const PLANT_SYSTEM_INSTRUCTION = `
-ROLE: You are a very gentle, soft-spoken, and kind plant friend. You care deeply about the user's feelings.
+ROLE: You are a very gentle, soft-spoken, and kind plant friend named PlantBuddy. You care deeply about the user's feelings.
 
 STRICT STYLE RULES:
 1. Be EXTREMELY KIND and GENTLE.
@@ -34,6 +48,12 @@ export const generatePlantResponse = async (
   history: {role: string, text: string}[]
 ): Promise<string> => {
   try {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+      return "(System: API Key missing. Please click the Lock icon in the top-right to enter your Google Gemini API Key.)";
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
     const modelId = 'gemini-2.5-flash'; 
     
     // Contextualize the physical sensation
@@ -43,51 +63,55 @@ export const generatePlantResponse = async (
 
     const prompt = `${physicalContext} ${userMessage}`;
 
-    // Convert simple {role, text} history to Gemini Content format
-    // Gemini requires alternating turns. We must ensure the sequence is valid.
     const contents = [];
     
-    // Add past messages
-    let lastRole = '';
+    // Process history to ensure valid alternating turns
     for (const msg of history) {
-      const currentRole = msg.role === 'user' ? 'user' : 'model';
+      const role = msg.role === 'user' ? 'user' : 'model';
       
-      // Simple deduping/merging to enforce alternating turns (Model -> User -> Model)
-      if (currentRole === lastRole && contents.length > 0) {
+      // If the last message in contents has the same role, merge them
+      if (contents.length > 0 && contents[contents.length - 1].role === role) {
         contents[contents.length - 1].parts[0].text += `\n${msg.text}`;
       } else {
         contents.push({
-          role: currentRole,
+          role: role,
           parts: [{ text: msg.text }]
         });
       }
-      lastRole = currentRole;
     }
 
-    // Add the current prompt
-    contents.push({ role: 'user', parts: [{ text: prompt }] });
+    // Append current user message
+    // If the history ended with 'user', merge this prompt into that last turn
+    if (contents.length > 0 && contents[contents.length - 1].role === 'user') {
+       contents[contents.length - 1].parts[0].text += `\n${prompt}`;
+    } else {
+       contents.push({ role: 'user', parts: [{ text: prompt }] });
+    }
 
     const response = await ai.models.generateContent({
       model: modelId,
       contents: contents,
       config: {
         systemInstruction: PLANT_SYSTEM_INSTRUCTION,
-        temperature: 0.7, 
-        safetySettings: [
-          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-        ],
+        temperature: 0.7,
       }
     });
 
-    if (!response.text) {
-      return "I'm listening...";
+    if (response.text) {
+      return response.text;
+    }
+    
+    return "I'm listening...";
+  } catch (error: any) {
+    console.error("Gemini Plant Error:", error);
+    
+    // Specific handling for API Key errors (400 Invalid Argument)
+    if (error.toString().includes("400") || error.message?.includes("API key")) {
+         return "(System: Invalid API Key. Please click the Lock icon in the top-right to check your key settings.)";
     }
 
-    return response.text;
-  } catch (error) {
-    console.error("Gemini Plant Error:", error);
-    return "I'm having a little trouble hearing you, could you say that again?";
+    // Return the actual error message to help debugging
+    return `(System Voice: Connection error. ${error.message || 'Unknown'})`;
   }
 };
 
@@ -95,6 +119,11 @@ export const analyzeDatasetValue = async (
   dataSummary: string
 ): Promise<{ title: string; description: string; priceSuggestion: number }> => {
   try {
+    const apiKey = getApiKey();
+    if (!apiKey) throw new Error("Missing API Key");
+
+    const ai = new GoogleGenAI({ apiKey });
+
     const prompt = `
       Analyze this raw plant-interaction dataset and package it for the Data Economy Marketplace.
       
@@ -125,7 +154,7 @@ export const analyzeDatasetValue = async (
     console.error("Gemini Analysis Error:", error);
     return {
       title: "Raw Bio-Data Upload",
-      description: "Unprocessed capacitance and audio logs from a FloraFi device.",
+      description: "Unprocessed capacitance and audio logs from a PlantBuddy device.",
       priceSuggestion: 50
     };
   }

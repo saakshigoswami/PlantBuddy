@@ -1,15 +1,21 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ViewMode, PlantDataPoint, MOCK_BLOBS, DataBlob } from './types';
-import { analyzeDatasetValue } from './services/geminiService'; // Switched back to Gemini
+import { analyzeDatasetValue } from './services/geminiService';
+import { uploadToWalrus, WalrusNetwork } from './services/walrusService';
+import { connectSuiWallet, checkSuiWalletInstalled, disconnectSuiWallet } from './services/suiWalletService';
 import DeviceMonitor from './components/DeviceMonitor';
 import DataMarketplace from './components/DataMarketplace';
 import Modal from './components/Modal';
-import { Flower, Store, Wallet, Loader2, CheckCircle, UploadCloud, FileText, Database, Activity, Download, ExternalLink } from 'lucide-react';
+import { Flower, Store, Wallet, Loader2, CheckCircle, UploadCloud, FileText, Database, Activity, Download, ExternalLink, Lock, AlertTriangle, Globe, LogOut } from 'lucide-react';
 
 const App: React.FC = () => {
   const [view, setView] = useState<ViewMode>(ViewMode.DEVICE);
-  const [walletConnected, setWalletConnected] = useState(false);
+  
+  // Wallet State
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  
   const [marketplaceListings, setMarketplaceListings] = useState<DataBlob[]>(MOCK_BLOBS);
   
   // Upload/Mint State
@@ -18,6 +24,67 @@ const App: React.FC = () => {
   const [currentSessionData, setCurrentSessionData] = useState<PlantDataPoint[]>([]);
   const [mintedBlob, setMintedBlob] = useState<DataBlob | null>(null);
   const [blobScript, setBlobScript] = useState<string>("");
+  
+  // Walrus Configuration
+  const [selectedNetwork, setSelectedNetwork] = useState<WalrusNetwork>('TESTNET');
+
+  // API Key Settings
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  // Default to the provided key initially
+  const [geminiKey, setGeminiKey] = useState('AIzaSyBC5wpd9XG6luOHGCBL4T1F-F3FeoRDAOE');
+  const [hasKey, setHasKey] = useState(true);
+
+  useEffect(() => {
+    // Check if key exists on mount
+    const local = localStorage.getItem('GEMINI_API_KEY');
+    if (local) {
+      setGeminiKey(local);
+    }
+    setHasKey(true);
+  }, []);
+
+  const handleConnectWallet = async () => {
+    if (walletAddress) {
+      // Disconnect logic
+      await disconnectSuiWallet();
+      setWalletAddress(null);
+      return;
+    }
+
+    if (!checkSuiWalletInstalled()) {
+      alert("Sui Wallet extension is not installed! Please install it from the Chrome Web Store to connect.");
+      window.open("https://chrome.google.com/webstore/detail/sui-wallet/opcgpfmipidbgpenhmajoajpbnyfyjmg", "_blank");
+      return;
+    }
+
+    try {
+      setIsConnecting(true);
+      const address = await connectSuiWallet();
+      if (address) {
+        setWalletAddress(address);
+      } else {
+        alert("Connection rejected by user.");
+      }
+    } catch (error) {
+      console.error(error);
+      alert("Failed to connect wallet.");
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  const handleSaveApiKey = () => {
+    if (geminiKey.trim()) {
+      localStorage.setItem('GEMINI_API_KEY', geminiKey.trim());
+      setHasKey(true);
+      setIsSettingsOpen(false);
+      alert('API Key Saved. Please restart your session.');
+    } else {
+       // Allow clearing key
+       localStorage.removeItem('GEMINI_API_KEY');
+       setGeminiKey('AIzaSyBC5wpd9XG6luOHGCBL4T1F-F3FeoRDAOE');
+    }
+  };
 
   const handleSaveSession = (data: PlantDataPoint[]) => {
     setCurrentSessionData(data);
@@ -31,8 +98,8 @@ const App: React.FC = () => {
     try {
       setUploadStep('ANALYZING');
       
-      // 1. Generate the Script (The "Payload" for Walrus)
-      const scriptHeader = `FLORA-FI SESSION TRANSCRIPT\nDATE: ${new Date().toISOString()}\nDEVICE_ID: ESP32_B7\n-----------------------------------\n\n`;
+      // 1. Generate the Script
+      const scriptHeader = `PLANTBUDDY SESSION TRANSCRIPT\nDATE: ${new Date().toISOString()}\nNETWORK: ${selectedNetwork}\nCREATOR: ${walletAddress || 'Anonymous'}\n-----------------------------------\n\n`;
       const scriptBody = currentSessionData.map(d => {
         const time = new Date(d.timestamp).toLocaleTimeString();
         if (d.userMessage) return `[${time}] USER: ${d.userMessage}`;
@@ -54,33 +121,35 @@ const App: React.FC = () => {
       const analysis = await analyzeDatasetValue(summary);
 
       setUploadStep('ENCRYPTING');
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Fake delay
+      await new Promise(resolve => setTimeout(resolve, 800)); // Encryption delay simulation
 
       setUploadStep('UPLOADING');
-      await new Promise(resolve => setTimeout(resolve, 2000)); // Fake Walrus upload delay
+      
+      // 3. REAL WALRUS UPLOAD
+      const { blobId } = await uploadToWalrus(fullScript, selectedNetwork);
 
-      // 3. Create Blob Object
+      // 4. Create Blob Object (Metadata wrapper)
       const newBlob: DataBlob = {
-        id: `blob_${Math.random().toString(16).slice(2, 10)}...${Math.random().toString(16).slice(2, 6)}`,
+        id: blobId, // Real Walrus Blob ID
         name: analysis.title,
         description: analysis.description,
         size: `${(fullScript.length / 1024).toFixed(2)} KB`,
         price: analysis.priceSuggestion,
-        creator: walletConnected ? '0x82...F9' : '0xME...YOU',
+        creator: walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : '0xME...YOU',
         timestamp: new Date().toISOString(),
         dataPoints: currentSessionData.length,
         sentimentScore: Math.floor(Math.random() * 100),
         status: 'LISTED',
-        owner: walletConnected ? '0x82...F9' : '0xME...YOU'
+        owner: walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : '0xME...YOU'
       };
 
       setMintedBlob(newBlob);
       setMarketplaceListings(prev => [newBlob, ...prev]);
       setUploadStep('SUCCESS');
-    } catch (error) {
+    } catch (error: any) {
       console.error("Upload failed", error);
       setUploadStep('IDLE');
-      alert("Failed to process upload. Gemini API Error.");
+      alert(`Upload Failed: ${error.message || "Unknown Error"}`);
     }
   };
 
@@ -90,7 +159,7 @@ const App: React.FC = () => {
     const element = document.createElement("a");
     const file = new Blob([blobScript], {type: 'text/plain'});
     element.href = URL.createObjectURL(file);
-    element.download = `FloraFi_${mintedBlob.id}.txt`;
+    element.download = `PlantBuddy_${mintedBlob.id.slice(0, 8)}.txt`;
     document.body.appendChild(element);
     element.click();
     document.body.removeChild(element);
@@ -109,7 +178,7 @@ const App: React.FC = () => {
                 <Flower className="h-6 w-6 text-brand-blue" />
               </div>
               <span className="text-xl font-mono font-bold tracking-tight text-white">
-                Flora<span className="text-brand-pink">Fi</span>
+                Plant<span className="text-brand-pink">Buddy</span>
               </span>
             </div>
 
@@ -132,13 +201,32 @@ const App: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2">
+              {/* Settings / Lock */}
+              <button 
+                onClick={() => setIsSettingsOpen(true)}
+                className={`p-2 rounded-lg transition-all ${!hasKey ? 'text-red-400 bg-red-500/10 border border-red-500/50 animate-pulse' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
+                title={!hasKey ? "API Key Missing!" : "Settings"}
+              >
+                {!hasKey ? <AlertTriangle className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+              </button>
+
               {/* Wallet */}
               <button 
-                onClick={() => setWalletConnected(!walletConnected)}
-                className={`px-4 py-2 rounded-lg text-sm font-mono font-bold border transition-all flex items-center gap-2 ${walletConnected ? 'bg-brand-green/10 text-brand-green border-brand-green/50' : 'bg-slate-800 border-slate-700 hover:border-slate-500'}`}
+                onClick={handleConnectWallet}
+                disabled={isConnecting}
+                className={`px-4 py-2 rounded-lg text-sm font-mono font-bold border transition-all flex items-center gap-2 ${walletAddress ? 'bg-brand-green/10 text-brand-green border-brand-green/50 hover:bg-red-500/10 hover:text-red-400 hover:border-red-400' : 'bg-slate-800 border-slate-700 hover:border-slate-500'}`}
               >
-                <Wallet className="w-4 h-4" />
-                {walletConnected ? '0x82...F9' : 'Connect Wallet'}
+                {walletAddress ? (
+                   <>
+                     <Wallet className="w-4 h-4" />
+                     {walletAddress.slice(0, 5)}...{walletAddress.slice(-4)}
+                   </>
+                ) : (
+                   <>
+                     <Wallet className="w-4 h-4" />
+                     {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+                   </>
+                )}
               </button>
             </div>
 
@@ -155,6 +243,51 @@ const App: React.FC = () => {
         )}
       </main>
 
+      {/* Settings Modal */}
+      <Modal 
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        title="API Settings"
+      >
+        <div className="space-y-4">
+           <div className="p-3 bg-brand-blue/30 rounded border border-brand-accent/20 text-xs text-brand-accent">
+             <p className="font-bold mb-1">Local Environment Setup</p>
+             <p>To use PlantBuddy, you need a Google Gemini API Key. A default key has been pre-loaded for you.</p>
+           </div>
+           
+           <div>
+             <label className="block text-xs font-mono text-slate-500 mb-1">GOOGLE GEMINI API KEY</label>
+             <input 
+               type="password" 
+               placeholder="AIza..." 
+               value={geminiKey}
+               onChange={(e) => setGeminiKey(e.target.value)}
+               className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white focus:outline-none focus:border-brand-pink"
+             />
+           </div>
+
+           <div className="text-[10px] text-slate-400 mt-2 p-2 bg-slate-900 rounded border border-slate-800">
+             <strong>Note:</strong> You can change this if you want to use your own quota. The link below opens Google AI Studio.
+           </div>
+
+           <a 
+             href="https://aistudio.google.com/app/apikey" 
+             target="_blank" 
+             rel="noreferrer"
+             className="block text-xs text-brand-pink hover:underline text-right mt-1"
+           >
+             Get a free API Key at Google AI Studio →
+           </a>
+
+           <button 
+             onClick={handleSaveApiKey}
+             className="w-full bg-brand-green/20 text-brand-green border border-brand-green/50 py-2 rounded font-bold hover:bg-brand-green/30 transition-colors"
+           >
+             Save Configuration
+           </button>
+        </div>
+      </Modal>
+
       {/* Upload/Minting Modal */}
       <Modal 
         isOpen={isModalOpen} 
@@ -168,9 +301,35 @@ const App: React.FC = () => {
                 <span className="font-bold text-slate-300">METADATA HEADER</span>
                 <span className="text-brand-accent">JSON_V2</span>
               </div>
+              <div className="flex justify-between"><span>CREATOR:</span> <span className="text-white">{walletAddress ? `${walletAddress.slice(0,8)}...` : 'ANONYMOUS'}</span></div>
               <div className="flex justify-between"><span>DATA_TYPE:</span> <span className="text-white">INTERACTION_SCRIPT</span></div>
               <div className="flex justify-between"><span>PACKETS:</span> <span className="text-white">{currentSessionData.length}</span></div>
-              <div className="flex justify-between"><span>ENCRYPTION:</span> <span className="text-white">AES-256 (Pending)</span></div>
+            </div>
+            
+            {/* Network Selector */}
+            <div className="space-y-2">
+               <label className="text-xs font-mono text-slate-500 block">DESTINATION NETWORK</label>
+               <div className="flex gap-2 bg-slate-900 p-1 rounded-lg border border-slate-700">
+                  <button 
+                    onClick={() => setSelectedNetwork('TESTNET')}
+                    className={`flex-1 py-2 rounded flex items-center justify-center gap-2 text-xs font-bold transition-colors ${selectedNetwork === 'TESTNET' ? 'bg-brand-blue text-brand-pink shadow' : 'text-slate-500 hover:text-white'}`}
+                  >
+                     <Globe className="w-3 h-3" />
+                     Testnet (Free)
+                  </button>
+                  <button 
+                    onClick={() => setSelectedNetwork('MAINNET')}
+                    className={`flex-1 py-2 rounded flex items-center justify-center gap-2 text-xs font-bold transition-colors ${selectedNetwork === 'MAINNET' ? 'bg-brand-green text-brand-blue shadow' : 'text-slate-500 hover:text-white'}`}
+                  >
+                     <Database className="w-3 h-3" />
+                     Mainnet (Prod)
+                  </button>
+               </div>
+               {selectedNetwork === 'MAINNET' && (
+                 <p className="text-[10px] text-yellow-500 flex items-center gap-1">
+                   <AlertTriangle className="w-3 h-3" /> Warning: Mainnet usually requires SUI tokens & signed transaction.
+                 </p>
+               )}
             </div>
             
             <p className="text-sm text-slate-300">
@@ -182,7 +341,7 @@ const App: React.FC = () => {
               className="w-full py-3 bg-brand-pink text-brand-blue font-bold rounded-lg hover:bg-white transition-colors flex justify-center items-center gap-2 shadow-lg shadow-brand-pink/20"
             >
               <UploadCloud className="w-5 h-5" />
-              Generate & Upload Script
+              Upload to Walrus ({selectedNetwork})
             </button>
           </div>
         )}
@@ -199,7 +358,7 @@ const App: React.FC = () => {
                {uploadStep === 'UPLOADING' && (
                  <>
                    <div className="text-brand-green">{`> Encryption Verified.`}</div>
-                   <div className="text-brand-pink animate-pulse">{`> Broadcasting to Walrus Nodes...`}</div>
+                   <div className="text-brand-pink animate-pulse">{`> Broadcasting to Walrus ${selectedNetwork}...`}</div>
                  </>
                )}
                
@@ -235,8 +394,8 @@ const App: React.FC = () => {
                   <span className="text-xs font-bold text-white">SCRIPT PAYLOAD STORED</span>
                 </div>
                 
-                <div className="text-[10px] text-slate-500 font-mono mb-1">WALRUS BLOB ID (SIMULATED)</div>
-                <div className="font-mono text-brand-accent text-xs break-all bg-slate-900/50 p-2 rounded border border-slate-700/50 mb-3">
+                <div className="text-[10px] text-slate-500 font-mono mb-1">WALRUS BLOB ID</div>
+                <div className="font-mono text-brand-accent text-xs break-all bg-slate-900/50 p-2 rounded border border-slate-700/50 mb-3 select-all">
                   {mintedBlob.id}
                 </div>
                 

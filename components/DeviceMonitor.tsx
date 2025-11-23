@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { LineChart, Line, ResponsiveContainer, YAxis, XAxis, Tooltip } from 'recharts';
-import { Mic, Play, Pause, Save, Activity, Wifi, Leaf, Volume2, MicOff, Send, Terminal, Cpu, Settings, Usb, ToggleLeft, ToggleRight, AlertCircle, VolumeX, Music, MessageCircle } from 'lucide-react';
+import { LineChart, Line, ResponsiveContainer, YAxis, XAxis, Tooltip, ReferenceLine } from 'recharts';
+import { Mic, Play, Pause, Save, Activity, Wifi, Leaf, Volume2, MicOff, Send, Terminal, Cpu, Settings, Usb, ToggleLeft, ToggleRight, AlertCircle, VolumeX, Music, MessageCircle, Sliders } from 'lucide-react';
 import { generatePlantResponse } from '../services/geminiService';
 import { PlantDataPoint, ChatMessage } from '../types';
 
@@ -24,7 +24,6 @@ interface DeviceMonitorProps {
 const INITIAL_DATA = Array(50).fill(0).map((_, i) => ({ time: i, val: 0 }));
 
 // --- BIO SYNTH ENGINE (Web Audio API) ---
-// Replicates the logic from plant_piano_with_sliders.py
 class BioSynth {
   ctx: AudioContext | null = null;
   masterGain: GainNode | null = null;
@@ -41,16 +40,14 @@ class BioSynth {
   gainH3: GainNode | null = null;
   gainSub: GainNode | null = null;
 
-  // Params (Matched to Python script defaults)
+  // Params
   params = {
     fmin: 110,
     fmax: 660,
-    ampMax: 0.5, // Increased slightly for visibility
-    sensitivity: 1.6,
-    deadzone: 2.5,
+    ampMax: 1.0, // Boosted max volume
     glide: 0.1, // Time constant for smoothing
-    harmonics: 0.10,
-    subLevel: 0.18
+    harmonics: 0.15,
+    subLevel: 0.25
   };
 
   constructor() {}
@@ -87,51 +84,62 @@ class BioSynth {
   }
 
   resume() {
-    if (this.ctx?.state === 'suspended') this.ctx.resume();
+    if (this.ctx?.state === 'suspended') {
+        this.ctx.resume();
+    }
   }
 
   suspend() {
     if (this.ctx?.state === 'running') this.ctx.suspend();
   }
 
-  update(deviation: number) {
+  update(raw: number, threshold: number) {
     if (!this.ctx || !this.masterGain) return;
 
     const now = this.ctx.currentTime;
     const p = this.params;
-
-    // 1. Calculate Target Amplitude based on Deadzone
-    let targetAmp = 0;
-    if (Math.abs(deviation) > p.deadzone) {
-      // Map deviation to amp (0.0 to 1.0)
-      const scaled = deviation * 0.8; // Sensitivity
-      const norm = Math.min(1.0, Math.max(0, scaled / 50)); // Assume 50 is "max" touch
-      targetAmp = norm * p.ampMax;
-    }
-
-    // 2. Calculate Frequency
-    // Map deviation to frequency range
-    // Python: fmin + norm * (fmax - fmin)
-    const freqNorm = Math.min(1.0, Math.max(0, deviation / 80)); // 80 is raw max range approx
-    const targetFreq = p.fmin + freqNorm * (p.fmax - p.fmin);
-
-    // 3. Apply updates with Glide (setTargetAtTime)
     const timeConstant = p.glide;
 
+    // GATE LOGIC: HARD CUT
+    // If raw value is less than or equal to threshold, silence immediately.
+    if (raw <= threshold) {
+      this.masterGain.gain.cancelScheduledValues(now);
+      this.masterGain.gain.setValueAtTime(0, now); 
+      return;
+    }
+
+    // AMPLITUDE MAPPING
+    const maxExpected = 120; // Soft cap for raw value
+    const inputRange = Math.max(1, maxExpected - threshold); 
+    
+    let normalizedInput = (raw - threshold) / inputRange;
+    normalizedInput = Math.min(1.0, Math.max(0, normalizedInput));
+
+    // Volume Floor: Start at 30% volume immediately upon crossing threshold
+    const minVol = 0.3; 
+    const maxVol = 1.0;
+    const scaledAmp = minVol + (normalizedInput * (maxVol - minVol));
+    
+    const targetAmp = scaledAmp * p.ampMax;
+
+    // FREQUENCY MAPPING
+    // Map normalized input to frequency range
+    const targetFreq = p.fmin + normalizedInput * (p.fmax - p.fmin);
+
     // Update Master Volume
+    this.masterGain.gain.cancelScheduledValues(now);
     this.masterGain.gain.setTargetAtTime(targetAmp, now, timeConstant);
 
     // Update Frequencies
-    if (targetAmp > 0.001) { // Only update pitch if audible to save CPU/complexity
+    if (targetAmp > 0.001) { 
         this.oscFund?.frequency.setTargetAtTime(targetFreq, now, timeConstant);
         this.oscH2?.frequency.setTargetAtTime(targetFreq * 2, now, timeConstant);
         this.oscH3?.frequency.setTargetAtTime(targetFreq * 3, now, timeConstant);
         this.oscSub?.frequency.setTargetAtTime(targetFreq * 0.5, now, timeConstant);
     }
 
-    // Mix Levels (Based on Python harmonics logic)
+    // Mix Levels
     const harmScale = p.harmonics;
-    
     this.gainFund?.gain.setTargetAtTime(1.0, now, timeConstant);
     this.gainH2?.gain.setTargetAtTime(harmScale, now, timeConstant);
     this.gainH3?.gain.setTargetAtTime(harmScale * 0.6, now, timeConstant);
@@ -155,6 +163,10 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
   // Simulation State
   const [isSimulationEnabled, setIsSimulationEnabled] = useState(false);
 
+  // Settings
+  const [soundThreshold, setSoundThreshold] = useState(50); // Default threshold
+  const [selectedVoiceURI, setSelectedVoiceURI] = useState<string>('');
+
   // MODES: TALK (AI Voice) vs MUSIC (BioSynth)
   const [interactionMode, setInteractionMode] = useState<'TALK' | 'MUSIC'>('TALK');
   const synthRef = useRef<BioSynth | null>(null);
@@ -164,7 +176,8 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
     topPoint: 0,
     interpolated: 0,
     baseline: 0, 
-    value: 0
+    value: 0,
+    raw: 0
   });
   
   // High-performance Ref for buffering incoming serial data without re-renders
@@ -197,7 +210,7 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
   const portRef = useRef<any>(null);
   const readerRef = useRef<any>(null);
   
-  // Logic simulation refs (used only if not connected)
+  // Logic simulation refs
   const simulatedPeakRef = useRef(55); 
   const isTouchingRef = useRef(false);
   const isRecordingRef = useRef(isRecording);
@@ -209,25 +222,14 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
 
   // Initialize Synth
   useEffect(() => {
-    synthRef.current = new BioSynth();
+    if (!synthRef.current) {
+        synthRef.current = new BioSynth();
+    }
     return () => {
       synthRef.current?.destroy();
       synthRef.current = null;
     }
   }, []);
-
-  // Handle Mode Switching
-  useEffect(() => {
-    if (interactionMode === 'MUSIC') {
-      // Init and start the audio context if not already
-      if (!synthRef.current?.ctx) synthRef.current?.init();
-      synthRef.current?.resume();
-      window.speechSynthesis.cancel(); // Stop speaking
-    } else {
-      // Suspend audio context to mute music
-      synthRef.current?.suspend();
-    }
-  }, [interactionMode]);
 
   // Sync Hardware Buffer to UI State (Throttled)
   useEffect(() => {
@@ -252,15 +254,17 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
       hardwareBufferRef.current.value = Math.floor(deviation);
 
       // Update Synth ONLY if in MUSIC Mode
+      // Crucial: We use currentRaw and check against soundThreshold inside update()
       if (interactionMode === 'MUSIC') {
-        synthRef.current?.update(hardwareBufferRef.current.value);
+        synthRef.current?.update(hardwareBufferRef.current.raw, soundThreshold);
       }
 
       setArduinoState({ 
           topPoint: hardwareBufferRef.current.topPoint,
           interpolated: hardwareBufferRef.current.interpolated,
           baseline: Math.floor(hardwareBufferRef.current.baseline),
-          value: hardwareBufferRef.current.value
+          value: hardwareBufferRef.current.value,
+          raw: hardwareBufferRef.current.raw
       });
       valueRef.current = hardwareBufferRef.current.value;
       
@@ -272,9 +276,9 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
 
     return () => {
         clearInterval(syncInterval);
-        synthRef.current?.update(0);
+        // Don't mute here on interval clear, only on unmount or mode switch
     };
-  }, [isConnected, isSimulationEnabled, interactionMode]);
+  }, [isConnected, isSimulationEnabled, interactionMode, soundThreshold]);
 
   // Trigger interactions
   useEffect(() => {
@@ -288,42 +292,53 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
     }
   }, [arduinoState.value]);
 
-  // Load Voices with Cleanup
+  // Cleanup speech listeners on unmount
   useEffect(() => {
-    const loadVoices = () => {
-      const available = window.speechSynthesis.getVoices();
-      setVoices(available);
-    };
-    loadVoices();
-    window.speechSynthesis.onvoiceschanged = loadVoices;
-    
     return () => {
+      window.speechSynthesis.cancel();
       window.speechSynthesis.onvoiceschanged = null;
     };
   }, []);
 
+  // Load Voices
+  useEffect(() => {
+    const loadVoices = () => {
+      const available = window.speechSynthesis.getVoices();
+      setVoices(available);
+      
+      // Auto-select a "good" voice if none selected
+      if (!selectedVoiceURI && available.length > 0) {
+          const preferred = available.find(v => v.name.includes("Google UK English Female")) || 
+                           available.find(v => v.name.includes("Google US English")) ||
+                           available[0];
+          if (preferred) setSelectedVoiceURI(preferred.voiceURI);
+      }
+    };
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+  }, [selectedVoiceURI]);
+
   // TTS Logic
   const speak = useCallback((text: string) => {
     if (!('speechSynthesis' in window)) return;
-    // Only speak if in TALK mode
     if (interactionMode !== 'TALK') return;
 
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.pitch = 1.0; 
-    utterance.rate = 0.9;  
-    utterance.volume = 0.9; 
-    const preferredVoice = voices.find(v => 
-      v.name.includes('Google US English') || 
-      v.name.includes('Microsoft Zira') || 
-      v.name.includes('Samantha')
-    );
-    if (preferredVoice) utterance.voice = preferredVoice;
+    utterance.rate = 1.0;  // Slightly faster for better flow
+    utterance.volume = 1.0; 
+    
+    if (selectedVoiceURI) {
+        const voice = voices.find(v => v.voiceURI === selectedVoiceURI);
+        if (voice) utterance.voice = voice;
+    }
+
     utterance.onstart = () => setIsSpeaking(true);
     utterance.onend = () => setIsSpeaking(false);
     utterance.onerror = () => setIsSpeaking(false);
     window.speechSynthesis.speak(utterance);
-  }, [voices, interactionMode]);
+  }, [voices, interactionMode, selectedVoiceURI]);
 
   // Interaction Logic
   const processInteraction = async (text: string, type: 'USER' | 'SYSTEM' | 'TOUCH', overrideValue?: number) => {
@@ -352,13 +367,11 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
       if (type === 'SYSTEM') prompt = `[SYSTEM EVENT: ${text}]`;
       if (type === 'TOUCH') prompt = `[SENSORY INPUT: User touched the plant. Sensor Deviation: ${currentValue}]`;
 
-      // Always generate response for the log/script
       const responseText = await generatePlantResponse(prompt, normalizedIntensity, historyForService);
       
       const newModelMsg: ChatMessage = { role: 'model', text: responseText };
       setMessages(prev => [...prev, newModelMsg]);
       
-      // Only Speak if in TALK mode
       if (interactionMode === 'TALK') {
         speak(responseText);
       }
@@ -386,9 +399,9 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
         processInteraction("The user has just activated the session. Wake up gently.", 'SYSTEM');
       }, 500);
       
-      // Ensure Audio Context is resumed on user gesture (Start Session)
+      // Explicitly resume context on user action to prevent blocking
       if (interactionMode === 'MUSIC' && synthRef.current) {
-         synthRef.current.init();
+         if (!synthRef.current.ctx) synthRef.current.init();
          synthRef.current.resume();
       }
 
@@ -402,6 +415,18 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
          synthRef.current?.suspend();
       }
     }
+  };
+  
+  const handleModeSwitch = (mode: 'TALK' | 'MUSIC') => {
+      setInteractionMode(mode);
+      if (mode === 'MUSIC') {
+          // Resume Audio Context on click
+          if (!synthRef.current?.ctx) synthRef.current?.init();
+          synthRef.current?.resume();
+          window.speechSynthesis.cancel();
+      } else {
+          synthRef.current?.suspend();
+      }
   };
 
   // --- WEB SERIAL & PARSING LOGIC (ASCII) ---
@@ -459,7 +484,8 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
      });
      const match = line.match(/TOP:([\-0-9.]+),VAL:([\-0-9.]+),INT:([\-0-9.]+)/);
      if (match) {
-        const rawInt = parseFloat(match[3]);
+        // Enforce Integer parsing
+        const rawInt = Math.round(parseFloat(match[3]));
         hardwareBufferRef.current.topPoint = parseFloat(match[1]);
         hardwareBufferRef.current.interpolated = rawInt;
         hardwareBufferRef.current.raw = rawInt; 
@@ -470,19 +496,18 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
   useEffect(() => {
     if (isConnected || !isSimulationEnabled) return;
     const update = () => {
-      const targetPeak = isTouchingRef.current ? 85 : 55; 
+      const targetPeak = isTouchingRef.current ? 85 : 45; 
       simulatedPeakRef.current = simulatedPeakRef.current + (targetPeak - simulatedPeakRef.current) * 0.1;
       const noise = (Math.random() - 0.5) * 2; 
       const currentPeak = simulatedPeakRef.current + noise;
       const interpolated = Math.round(currentPeak * 10); 
       hardwareBufferRef.current.topPoint = Math.round(currentPeak);
       hardwareBufferRef.current.interpolated = interpolated;
-      hardwareBufferRef.current.raw = interpolated;
-      hardwareBufferRef.current.baseline = 550;
+      hardwareBufferRef.current.raw = Math.round(currentPeak); // Ensure Raw follows peak
+      hardwareBufferRef.current.baseline = 45;
       
       if (Math.random() > 0.8) {
-         const val = Math.max(0, interpolated - 550);
-         const simLine = `TOP:${Math.floor(currentPeak)},VAL:${Math.floor(val)},INT:${interpolated/10}`;
+         const simLine = `TOP:${Math.floor(currentPeak)},VAL:${Math.floor(Math.max(0, currentPeak-45))},INT:${interpolated/10}`;
          setRawSerialBuffer(prev => {
              const n = [...prev, simLine];
              return n.length > 8 ? n.slice(n.length - 8) : n;
@@ -545,13 +570,13 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
       
       {/* LEFT: Hardware Visualizer */}
       <div className="lg:col-span-2 flex flex-col gap-6">
-        <div className="bg-slate-900/50 border border-brand-accent/20 rounded-2xl p-6 relative overflow-hidden backdrop-blur-md shadow-xl min-h-[320px]">
+        <div className="bg-slate-900/50 border border-slate-700/50 rounded-2xl p-6 relative backdrop-blur-md shadow-xl min-h-[450px]">
           
           {/* Top Bar */}
           <div className="flex justify-between items-center mb-4 relative z-10">
             <div className="flex items-center gap-2">
-              <Activity className="w-5 h-5 text-brand-accent" />
-              <h2 className="text-lg font-mono text-brand-accent tracking-wider">CAPACITANCE SENSOR</h2>
+              <Activity className="w-5 h-5 text-sky-400" />
+              <h2 className="text-lg font-mono text-sky-400 tracking-wider">CAPACITANCE SENSOR</h2>
             </div>
             <div className="flex items-center gap-3">
                {connectionError && (
@@ -563,7 +588,7 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
                <button 
                  onClick={connectSerial}
                  disabled={isConnected}
-                 className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-mono font-bold border transition-all cursor-pointer ${isConnected ? 'bg-brand-green/10 text-brand-green border-brand-green' : 'bg-slate-800 text-slate-300 border-slate-600 hover:bg-slate-700'}`}
+                 className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-mono font-bold border transition-all cursor-pointer ${isConnected ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500' : 'bg-slate-800 text-slate-300 border-slate-600 hover:bg-slate-700'}`}
                >
                   {isConnected ? <Wifi className="w-3 h-3" /> : <Usb className="w-3 h-3" />}
                   {isConnected ? "CONNECTED" : "CONNECT DEVICE"}
@@ -572,11 +597,11 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
           </div>
           
           {/* Graph */}
-          <div className="h-64 w-full relative z-0">
+          <div className="h-64 w-full relative z-0 mb-4">
              <div className="absolute top-0 left-0 z-10 text-[10px] font-mono text-slate-500 space-y-1 bg-slate-900/80 p-2 rounded border border-slate-800 pointer-events-none">
-                <div>RAW_INT: <span className="text-brand-accent">{arduinoState.interpolated.toFixed(2)}</span></div>
-                <div>BASELINE: <span className="text-slate-300">{arduinoState.baseline}</span></div>
-                <div>MODE: <span className={interactionMode === 'MUSIC' ? 'text-brand-pink' : 'text-brand-accent'}>{interactionMode}</span></div>
+                <div>RAW_INT: <span className="text-sky-400">{arduinoState.interpolated.toFixed(0)}</span></div>
+                <div>THRESHOLD: <span className="text-pink-400">{soundThreshold}</span></div>
+                <div>MODE: <span className={interactionMode === 'MUSIC' ? 'text-pink-400' : 'text-sky-400'}>{interactionMode}</span></div>
              </div>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData}>
@@ -587,10 +612,11 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
                   labelStyle={{display: 'none'}}
                   formatter={(value: number) => [`${value}`, 'Raw Value']}
                 />
+                <ReferenceLine y={soundThreshold} stroke="#FFC0CB" strokeDasharray="3 3" opacity={0.5} />
                 <Line 
                   type="monotone" 
                   dataKey="val" 
-                  stroke={arduinoState.value > 15 ? '#FFC0CB' : '#38BDF8'} 
+                  stroke={arduinoState.raw > soundThreshold ? '#FFC0CB' : '#38BDF8'} 
                   strokeWidth={2} 
                   dot={false}
                   isAnimationActive={false} 
@@ -599,24 +625,33 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
             </ResponsiveContainer>
           </div>
 
-          {/* Live Value */}
-          <div className="absolute top-20 right-6 text-right pointer-events-none z-0">
-             <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
-                LIVE DEVIATION
-             </div>
-             <div className={`text-4xl font-mono font-bold transition-colors ${arduinoState.value > 15 ? 'text-brand-pink drop-shadow-[0_0_10px_rgba(255,192,203,0.5)]' : 'text-white'}`}>
-               {arduinoState.value}
+          {/* Threshold Slider Control */}
+          <div className="relative z-10 bg-slate-900/80 p-3 rounded-lg border border-slate-700/50 flex items-center gap-3">
+             <Sliders className="w-4 h-4 text-pink-400" />
+             <div className="flex-1">
+               <div className="flex justify-between text-[10px] font-mono text-slate-400 mb-1">
+                 <span>TRIGGER THRESHOLD</span>
+                 <span>{soundThreshold}</span>
+               </div>
+               <input 
+                 type="range" 
+                 min="0" 
+                 max="100" 
+                 value={soundThreshold} 
+                 onChange={(e) => setSoundThreshold(parseInt(e.target.value))}
+                 className="w-full h-2 rounded-lg cursor-pointer accent-pink-400"
+               />
              </div>
           </div>
 
-          {/* Touch Status */}
-          <div className="absolute bottom-4 right-4 left-4 h-20 rounded-xl border border-dashed border-slate-700 flex items-center justify-center pointer-events-none">
-            <div className="text-center flex flex-col items-center">
-              <Leaf className={`w-6 h-6 mb-1 transition-colors ${arduinoState.value > 15 ? 'text-brand-pink' : 'text-slate-500'}`} />
-              <span className="text-[10px] font-mono text-slate-400">
-                {arduinoState.value > 15 ? "INTERACTION DETECTED" : "WAITING FOR TOUCH"}
-              </span>
-            </div>
+          {/* Live Value Display (Background) */}
+          <div className="absolute top-20 right-6 text-right pointer-events-none z-0">
+             <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                RAW VALUE
+             </div>
+             <div className={`text-4xl font-mono font-bold transition-colors ${arduinoState.raw > soundThreshold ? 'text-pink-400 drop-shadow-[0_0_10px_rgba(255,192,203,0.5)]' : 'text-white'}`}>
+               {arduinoState.raw}
+             </div>
           </div>
         </div>
 
@@ -625,7 +660,7 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
            <div className="bg-slate-900/80 p-4 rounded-xl border border-slate-800 space-y-3">
               <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                 <div className="flex items-center gap-2">
-                   <Cpu className="w-4 h-4 text-brand-green" />
+                   <Cpu className="w-4 h-4 text-emerald-400" />
                    <span className="font-mono text-xs font-bold text-white">DEVICE STATE</span>
                 </div>
                 {!isConnected && (
@@ -633,16 +668,18 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
                      onClick={() => setIsSimulationEnabled(!isSimulationEnabled)}
                      className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-white"
                    >
-                     {isSimulationEnabled ? <ToggleRight className="w-4 h-4 text-brand-pink" /> : <ToggleLeft className="w-4 h-4" />}
+                     {isSimulationEnabled ? <ToggleRight className="w-4 h-4 text-pink-400" /> : <ToggleLeft className="w-4 h-4" />}
                      TEST MODE
                    </button>
                 )}
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs font-mono">
                  <div className="text-slate-400">Connection:</div> 
-                 <div className={`text-right ${isConnected ? 'text-brand-green' : 'text-slate-500'}`}>{isConnected ? 'USB SERIAL' : 'OFFLINE'}</div>
-                 <div className="text-slate-400">Peak Lock:</div> 
-                 <div className={`text-right ${arduinoState.value > 15 ? 'text-brand-pink' : 'text-brand-green'}`}>{arduinoState.value > 15 ? 'LOCKED' : 'SCANNING'}</div>
+                 <div className={`text-right ${isConnected ? 'text-emerald-400' : 'text-slate-500'}`}>{isConnected ? 'USB SERIAL' : 'OFFLINE'}</div>
+                 <div className="text-slate-400">Audio Gate:</div> 
+                 <div className={`text-right ${arduinoState.raw > soundThreshold ? 'text-pink-400 animate-pulse' : 'text-slate-600'}`}>
+                    {arduinoState.raw > soundThreshold ? 'OPEN' : 'CLOSED'}
+                 </div>
               </div>
            </div>
 
@@ -652,9 +689,9 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
                   <Terminal className="w-3 h-3" />
                   <span>SERIAL MONITOR</span>
                 </div>
-                <div className={`w-2 h-2 rounded-full ${rxActive ? 'bg-brand-green' : 'bg-slate-700'}`}></div>
+                <div className={`w-2 h-2 rounded-full ${rxActive ? 'bg-emerald-400' : 'bg-slate-700'}`}></div>
               </div>
-              <div className="flex-1 overflow-hidden text-brand-green/70 leading-none opacity-70">
+              <div className="flex-1 overflow-hidden text-emerald-400/70 leading-none opacity-70">
                  {rawSerialBuffer.map((line, i) => (
                    <span key={i} className="block border-b border-white/5 py-0.5">{line}</span>
                  ))}
@@ -678,7 +715,7 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold border flex items-center gap-1 transition-all ${
                 isRecording 
                 ? 'bg-red-500/10 text-red-400 border-red-500/50' 
-                : 'bg-brand-green/10 text-brand-green border-brand-green/50'
+                : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/50'
                 }`}
               >
                 {isRecording ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
@@ -689,20 +726,37 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
            {/* Toggle Switch */}
            <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
               <button
-                 onClick={() => setInteractionMode('TALK')}
-                 className={`flex-1 flex items-center justify-center gap-2 py-1.5 rounded-md text-xs font-bold transition-all ${interactionMode === 'TALK' ? 'bg-brand-blue text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                 onClick={() => handleModeSwitch('TALK')}
+                 className={`flex-1 flex items-center justify-center gap-2 py-1.5 rounded-md text-xs font-bold transition-all ${interactionMode === 'TALK' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
               >
                  <MessageCircle className="w-3 h-3" />
                  TALK MODE
               </button>
               <button
-                 onClick={() => setInteractionMode('MUSIC')}
-                 className={`flex-1 flex items-center justify-center gap-2 py-1.5 rounded-md text-xs font-bold transition-all ${interactionMode === 'MUSIC' ? 'bg-brand-pink text-brand-blue shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                 onClick={() => handleModeSwitch('MUSIC')}
+                 className={`flex-1 flex items-center justify-center gap-2 py-1.5 rounded-md text-xs font-bold transition-all ${interactionMode === 'MUSIC' ? 'bg-pink-400 text-slate-900 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
               >
                  <Music className="w-3 h-3" />
                  MUSIC MODE
               </button>
            </div>
+           
+           {/* Voice Selector (Only in Talk Mode) */}
+           {interactionMode === 'TALK' && (
+              <div className="mt-3">
+                <label className="text-[10px] font-mono text-slate-500 block mb-1">AI VOICE</label>
+                <select 
+                  value={selectedVoiceURI}
+                  onChange={(e) => setSelectedVoiceURI(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded p-1.5 focus:outline-none focus:border-pink-400"
+                >
+                  <option value="">Default Voice</option>
+                  {voices.map(v => (
+                    <option key={v.voiceURI} value={v.voiceURI}>{v.name} ({v.lang})</option>
+                  ))}
+                </select>
+              </div>
+           )}
         </div>
 
         {/* Messages */}
@@ -711,7 +765,7 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
            {sessionData.length > 0 && (
               <button 
                 onClick={() => onSaveSession(sessionData)}
-                className="w-full py-2 mb-2 bg-brand-accent/10 text-brand-accent font-mono text-xs border border-brand-accent/20 rounded-lg hover:bg-brand-accent hover:text-brand-blue flex items-center justify-center gap-2"
+                className="w-full py-2 mb-2 bg-sky-400/10 text-sky-400 font-mono text-xs border border-sky-400/20 rounded-lg hover:bg-sky-400 hover:text-slate-900 flex items-center justify-center gap-2"
               >
                 <Save className="w-3 h-3" />
                 MINT SESSION DATA TO WALRUS
@@ -730,8 +784,8 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
             <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[85%] p-3 rounded-2xl text-sm leading-relaxed ${
                 msg.role === 'user' 
-                  ? 'bg-brand-blue border border-slate-600 text-white rounded-tr-none' 
-                  : 'bg-slate-800 border border-brand-pink/20 text-slate-200 rounded-tl-none'
+                  ? 'bg-slate-700 border border-slate-600 text-white rounded-tr-none' 
+                  : 'bg-slate-800 border border-pink-400/20 text-slate-200 rounded-tl-none'
               }`}>
                 {msg.text}
               </div>
@@ -758,21 +812,26 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
                   className={`p-2 rounded-lg transition-all border disabled:opacity-50 ${
                     isListening 
                     ? 'bg-red-500 text-white border-red-400 animate-pulse' 
-                    : 'bg-slate-800 text-brand-pink border-slate-700'
+                    : 'bg-slate-800 text-pink-400 border-slate-700'
                   }`}
                 >
                   {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
                 </button>
                 {!isListening && (
-                  <button onClick={handleSendMessage} disabled={!isRecording || !inputText.trim()} className="p-2 bg-brand-pink text-brand-blue rounded-lg">
+                  <button onClick={handleSendMessage} disabled={!isRecording || !inputText.trim()} className="p-2 bg-pink-400 text-slate-900 rounded-lg">
                     <Send className="w-5 h-5" />
                   </button>
                 )}
              </div>
           ) : (
-             <div className="flex items-center justify-center text-brand-pink font-mono text-xs gap-2 py-2">
-                <Music className="w-4 h-4 animate-bounce" />
-                Bio-Sonification Active
+             <div className="flex flex-col items-center justify-center text-pink-400 font-mono text-xs gap-1 py-1">
+                <div className="flex items-center gap-2">
+                   <Music className="w-4 h-4" />
+                   Bio-Sonification Active
+                </div>
+                <div className="text-slate-500">
+                   (Signal: {arduinoState.raw} / Threshold: {soundThreshold})
+                </div>
              </div>
           )}
         </div>

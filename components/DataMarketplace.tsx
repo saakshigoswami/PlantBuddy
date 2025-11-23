@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { DataBlob } from '../types';
 import { Database, ShieldCheck, Coins, Search } from 'lucide-react';
@@ -13,7 +14,7 @@ const DataMarketplace: React.FC<DataMarketplaceProps> = ({ listings }) => {
       {/* Header Section */}
       <div className="text-center space-y-4 py-8 bg-gradient-to-r from-brand-pink/10 via-transparent to-brand-accent/10 rounded-3xl border border-white/5">
         <h1 className="text-4xl md:text-6xl font-mono font-bold text-transparent bg-clip-text bg-gradient-to-r from-brand-pink to-brand-accent">
-          FLORADATA MARKET
+          PLANTBUDDY MARKET
         </h1>
         <p className="text-slate-400 max-w-2xl mx-auto">
           Decentralized exchange for bio-interactive datasets. 
