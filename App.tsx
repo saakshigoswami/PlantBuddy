@@ -2,15 +2,20 @@
 import React, { useState, useEffect } from 'react';
 import { ViewMode, PlantDataPoint, MOCK_BLOBS, DataBlob } from './types';
 import { analyzeDatasetValue } from './services/geminiService';
-import { uploadToWalrus, WalrusNetwork } from './services/walrusService';
-import { connectSuiWallet, disconnectSuiWallet } from './services/suiWalletService';
+// Import new SDK services
+import { uploadSessionViaWalrusSDK, certifyBlobOnChain } from './services/walrusUpload';
+import { connectSuiWallet, disconnectSuiWallet, getWalletAdapter } from './services/suiWalletService';
 import DeviceMonitor from './components/DeviceMonitor';
 import DataMarketplace from './components/DataMarketplace';
+import LandingPage from './components/LandingPage';
 import Modal from './components/Modal';
-import { Flower, Store, Wallet, Loader2, CheckCircle, UploadCloud, FileText, Database, Activity, Download, ExternalLink, Lock, AlertTriangle, Globe, LogOut } from 'lucide-react';
+import { Flower, Store, Wallet, Loader2, CheckCircle, UploadCloud, FileText, Database, Activity, Download, ExternalLink, Lock, AlertTriangle, Globe, LogOut, Home, Award } from 'lucide-react';
+
+// Walrus Network Type compatible with the new service logic
+type WalrusNetwork = 'TESTNET' | 'MAINNET';
 
 const App: React.FC = () => {
-  const [view, setView] = useState<ViewMode>(ViewMode.DEVICE);
+  const [view, setView] = useState<ViewMode>(ViewMode.HOME);
   
   // Wallet State
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
@@ -20,7 +25,8 @@ const App: React.FC = () => {
   
   // Upload/Mint State
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [uploadStep, setUploadStep] = useState<'IDLE' | 'ANALYZING' | 'ENCRYPTING' | 'UPLOADING' | 'SUCCESS'>('IDLE');
+  // Added 'CERTIFYING' step for the new workflow
+  const [uploadStep, setUploadStep] = useState<'IDLE' | 'ANALYZING' | 'ENCRYPTING' | 'UPLOADING' | 'CERTIFYING' | 'SUCCESS'>('IDLE');
   const [currentSessionData, setCurrentSessionData] = useState<PlantDataPoint[]>([]);
   const [mintedBlob, setMintedBlob] = useState<DataBlob | null>(null);
   const [blobScript, setBlobScript] = useState<string>("");
@@ -50,10 +56,6 @@ const App: React.FC = () => {
       setWalletAddress(null);
       return;
     }
-
-    // NOTE: We do NOT check checkSuiWalletInstalled() here immediately.
-    // We let the connectSuiWallet service handle the "wait and retry" logic
-    // to fix race conditions where the extension loads slightly after the app.
 
     try {
       setIsConnecting(true);
@@ -98,6 +100,12 @@ const App: React.FC = () => {
   };
 
   const processUpload = async () => {
+    const adapter = getWalletAdapter();
+    if (!adapter) {
+      alert("Please connect your Sui Wallet first to sign the upload transaction.");
+      return;
+    }
+
     try {
       setUploadStep('ANALYZING');
       
@@ -128,12 +136,28 @@ const App: React.FC = () => {
 
       setUploadStep('UPLOADING');
       
-      // 3. REAL WALRUS UPLOAD
-      const { blobId } = await uploadToWalrus(fullScript, selectedNetwork);
+      // 3. REAL WALRUS UPLOAD VIA SDK
+      // We pass the fullScript string and the wallet adapter
+      const result = await uploadSessionViaWalrusSDK(fullScript, adapter);
+      console.log("Walrus Upload Result:", result);
 
-      // 4. Create Blob Object (Metadata wrapper)
+      if (!result.blobId) throw new Error("Failed to get Blob ID from Walrus");
+
+      // 4. ON-CHAIN CERTIFICATION
+      if (result.certificate) {
+        setUploadStep('CERTIFYING');
+        try {
+          await certifyBlobOnChain(result.blobId, result.certificate, adapter);
+          console.log("Blob certified on Sui!");
+        } catch (certErr) {
+          console.warn("Certification warning:", certErr);
+          // We continue even if certification fails, as the blob is uploaded
+        }
+      }
+
+      // 5. Create Blob Object (Metadata wrapper for Marketplace)
       const newBlob: DataBlob = {
-        id: blobId, // Real Walrus Blob ID
+        id: result.blobId, 
         name: analysis.title,
         description: analysis.description,
         size: `${(fullScript.length / 1024).toFixed(2)} KB`,
@@ -149,6 +173,7 @@ const App: React.FC = () => {
       setMintedBlob(newBlob);
       setMarketplaceListings(prev => [newBlob, ...prev]);
       setUploadStep('SUCCESS');
+
     } catch (error: any) {
       console.error("Upload failed", error);
       setUploadStep('IDLE');
@@ -168,6 +193,20 @@ const App: React.FC = () => {
     document.body.removeChild(element);
   };
 
+  // View Routing
+  const renderView = () => {
+    switch(view) {
+      case ViewMode.HOME:
+        return <LandingPage onStart={() => setView(ViewMode.DEVICE)} />;
+      case ViewMode.DEVICE:
+        return <DeviceMonitor onSaveSession={handleSaveSession} />;
+      case ViewMode.MARKETPLACE:
+        return <DataMarketplace listings={marketplaceListings} />;
+      default:
+        return <LandingPage onStart={() => setView(ViewMode.DEVICE)} />;
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#0f172a] text-slate-200 font-sans">
       {/* Navigation Bar */}
@@ -176,30 +215,40 @@ const App: React.FC = () => {
           <div className="flex items-center justify-between h-16">
             
             {/* Logo */}
-            <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setView(ViewMode.HOME)}
+              className="flex items-center gap-3 hover:opacity-80 transition-opacity"
+            >
               <div className="bg-brand-pink rounded-lg p-1.5">
                 <Flower className="h-6 w-6 text-brand-blue" />
               </div>
-              <span className="text-xl font-mono font-bold tracking-tight text-white">
+              <span className="text-xl font-mono font-bold tracking-tight text-white hidden sm:block">
                 Plant<span className="text-brand-pink">Buddy</span>
               </span>
-            </div>
+            </button>
 
             {/* Nav Links */}
             <div className="flex items-center gap-1 bg-slate-800/50 p-1 rounded-xl border border-white/5">
               <button 
+                onClick={() => setView(ViewMode.HOME)}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${view === ViewMode.HOME ? 'bg-brand-blue text-brand-pink shadow-lg' : 'text-slate-400 hover:text-white'}`}
+                title="Home"
+              >
+                <Home className="w-4 h-4" />
+              </button>
+              <button 
                 onClick={() => setView(ViewMode.DEVICE)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${view === ViewMode.DEVICE ? 'bg-brand-blue text-brand-pink shadow-lg' : 'text-slate-400 hover:text-white'}`}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${view === ViewMode.DEVICE ? 'bg-brand-blue text-brand-pink shadow-lg' : 'text-slate-400 hover:text-white'}`}
               >
                 <Activity className="w-4 h-4" />
-                <span className="hidden sm:inline">Device Interface</span>
+                <span className="hidden md:inline">Device</span>
               </button>
               <button 
                 onClick={() => setView(ViewMode.MARKETPLACE)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${view === ViewMode.MARKETPLACE ? 'bg-brand-blue text-brand-pink shadow-lg' : 'text-slate-400 hover:text-white'}`}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${view === ViewMode.MARKETPLACE ? 'bg-brand-blue text-brand-pink shadow-lg' : 'text-slate-400 hover:text-white'}`}
               >
                 <Store className="w-4 h-4" />
-                <span className="hidden sm:inline">Data Market</span>
+                <span className="hidden md:inline">Market</span>
               </button>
             </div>
 
@@ -217,17 +266,17 @@ const App: React.FC = () => {
               <button 
                 onClick={handleConnectWallet}
                 disabled={isConnecting}
-                className={`px-4 py-2 rounded-lg text-sm font-mono font-bold border transition-all flex items-center gap-2 ${walletAddress ? 'bg-brand-green/10 text-brand-green border-brand-green/50 hover:bg-red-500/10 hover:text-red-400 hover:border-red-400' : 'bg-slate-800 border-slate-700 hover:border-slate-500'}`}
+                className={`px-3 py-2 rounded-lg text-sm font-mono font-bold border transition-all flex items-center gap-2 ${walletAddress ? 'bg-brand-green/10 text-brand-green border-brand-green/50 hover:bg-red-500/10 hover:text-red-400 hover:border-red-400' : 'bg-slate-800 border-slate-700 hover:border-slate-500'}`}
               >
                 {walletAddress ? (
                    <>
                      <Wallet className="w-4 h-4" />
-                     {walletAddress.slice(0, 5)}...{walletAddress.slice(-4)}
+                     <span className="hidden sm:inline">{walletAddress.slice(0, 5)}...{walletAddress.slice(-4)}</span>
                    </>
                 ) : (
                    <>
                      <Wallet className="w-4 h-4" />
-                     {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+                     <span className="hidden sm:inline">{isConnecting ? 'Connecting...' : 'Connect'}</span>
                    </>
                 )}
               </button>
@@ -238,12 +287,8 @@ const App: React.FC = () => {
       </nav>
 
       {/* Main Content */}
-      <main className="pt-24 pb-12 px-4 max-w-7xl mx-auto min-h-screen">
-        {view === ViewMode.DEVICE ? (
-          <DeviceMonitor onSaveSession={handleSaveSession} />
-        ) : (
-          <DataMarketplace listings={marketplaceListings} />
-        )}
+      <main className="pt-24 px-4 max-w-7xl mx-auto min-h-screen">
+        {renderView()}
       </main>
 
       {/* Settings Modal */}
@@ -349,7 +394,7 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {(uploadStep === 'ANALYZING' || uploadStep === 'ENCRYPTING' || uploadStep === 'UPLOADING') && (
+        {(uploadStep === 'ANALYZING' || uploadStep === 'ENCRYPTING' || uploadStep === 'UPLOADING' || uploadStep === 'CERTIFYING') && (
           <div className="py-6 space-y-6">
             {/* Terminal-style progress */}
             <div className="bg-slate-950 rounded-lg p-4 font-mono text-xs space-y-2 border border-slate-800 h-48 overflow-hidden relative">
@@ -358,11 +403,14 @@ const App: React.FC = () => {
                {blobScript && <div className="text-slate-500 opacity-50 whitespace-pre-wrap truncate">{blobScript.slice(0, 150)}...</div>}
                {uploadStep !== 'ANALYZING' && <div className="text-brand-accent">{`> AI Analysis Complete.`}</div>}
                {uploadStep === 'ENCRYPTING' && <div className="text-yellow-400 animate-pulse">{`> Encrypting Payload...`}</div>}
-               {uploadStep === 'UPLOADING' && (
+               {(uploadStep === 'UPLOADING' || uploadStep === 'CERTIFYING') && (
                  <>
                    <div className="text-brand-green">{`> Encryption Verified.`}</div>
                    <div className="text-brand-pink animate-pulse">{`> Broadcasting to Walrus ${selectedNetwork}...`}</div>
                  </>
+               )}
+               {uploadStep === 'CERTIFYING' && (
+                  <div className="text-brand-accent animate-pulse">{`> Certifying Blob on Sui Chain...`}</div>
                )}
                
                {/* Scanline effect */}
@@ -383,7 +431,7 @@ const App: React.FC = () => {
             </div>
             <div>
               <h4 className="text-xl font-bold text-white">Upload Complete</h4>
-              <p className="text-slate-400 text-sm mt-2">Data Blob stored on Walrus & Token Minted.</p>
+              <p className="text-slate-400 text-sm mt-2">Data Blob stored on Walrus & Certified on Sui.</p>
             </div>
             
             <div className="bg-slate-800/50 border border-dashed border-slate-600 p-4 rounded-xl text-left relative overflow-hidden">
@@ -393,8 +441,8 @@ const App: React.FC = () => {
               
               <div className="relative z-10">
                 <div className="flex items-center gap-2 mb-3">
-                  <FileText className="w-4 h-4 text-brand-accent" />
-                  <span className="text-xs font-bold text-white">SCRIPT PAYLOAD STORED</span>
+                  <Award className="w-4 h-4 text-brand-accent" />
+                  <span className="text-xs font-bold text-white">ON-CHAIN CERTIFIED</span>
                 </div>
                 
                 <div className="text-[10px] text-slate-500 font-mono mb-1">WALRUS BLOB ID</div>

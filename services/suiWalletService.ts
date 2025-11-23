@@ -4,6 +4,7 @@ interface LegacySuiWalletProvider {
   requestPermissions: () => Promise<boolean>;
   getAccounts: () => Promise<string[]>;
   disconnect: () => Promise<void>;
+  signAndExecuteTransactionBlock: (args: any) => Promise<any>;
 }
 
 // Interface for Wallet Standard (Modern)
@@ -19,6 +20,9 @@ interface StandardWallet {
     };
     'standard:disconnect'?: {
       disconnect: () => Promise<void>;
+    };
+    'sui:signAndExecuteTransactionBlock'?: {
+      signAndExecuteTransactionBlock: (input: any) => Promise<any>;
     };
   };
 }
@@ -39,6 +43,7 @@ declare global {
 
 // Cache discovered wallets to avoid losing them
 let detectedWallets: StandardWallet[] = [];
+let activeWalletAdapter: any = null; // Store the active adapter for signing
 
 // Listener for the 'standard:register-wallet' event
 if (typeof window !== 'undefined') {
@@ -98,6 +103,21 @@ const waitForWallet = async (retries = 10, delay = 200): Promise<boolean> => {
 };
 
 /**
+ * Returns the active wallet adapter for signing transactions
+ */
+export const getWalletAdapter = () => {
+  // Return the cached adapter from connection
+  if (activeWalletAdapter) return activeWalletAdapter;
+  
+  // Fallback: check window objects directly if no standard connection was established
+  if (window.suiWallet) return window.suiWallet;
+  if (window.suiet) return window.suiet;
+  if (window.sui) return window.sui;
+  
+  return null;
+};
+
+/**
  * Connects to the wallet using the best available method.
  * Includes a retry mechanism for initial injection delay.
  */
@@ -119,6 +139,19 @@ export const connectSuiWallet = async (): Promise<string | null> => {
       try {
         const result = await targetWallet.features['standard:connect'].connect();
         if (result.accounts && result.accounts.length > 0) {
+          // Wrap Standard Wallet to look like a Signer for convenience
+          activeWalletAdapter = {
+            signAndExecuteTransactionBlock: async (input: any) => {
+              if (targetWallet.features['sui:signAndExecuteTransactionBlock']) {
+                return await targetWallet.features['sui:signAndExecuteTransactionBlock'].signAndExecuteTransactionBlock({
+                   ...input,
+                   account: targetWallet.accounts[0],
+                   chain: targetWallet.chains[0]
+                });
+              }
+              throw new Error("Wallet does not support signing");
+            }
+          };
           return result.accounts[0].address;
         }
       } catch (err) {
@@ -132,7 +165,10 @@ export const connectSuiWallet = async (): Promise<string | null> => {
       const hasPermissions = await window.suiWallet.requestPermissions();
       if (hasPermissions) {
         const accounts = await window.suiWallet.getAccounts();
-        if (accounts && accounts.length > 0) return accounts[0];
+        if (accounts && accounts.length > 0) {
+          activeWalletAdapter = window.suiWallet;
+          return accounts[0];
+        }
       }
     }
 
@@ -140,7 +176,10 @@ export const connectSuiWallet = async (): Promise<string | null> => {
     if (window.suiet) {
       console.log("Connecting via SuiET...");
       const result = await window.suiet.connect();
-      if (result?.data?.[0]) return result.data[0];
+      if (result?.data?.[0]) {
+        activeWalletAdapter = window.suiet;
+        return result.data[0];
+      }
     }
 
     throw new Error("Wallet found but connection failed or was rejected.");
@@ -152,6 +191,7 @@ export const connectSuiWallet = async (): Promise<string | null> => {
 };
 
 export const disconnectSuiWallet = async (): Promise<void> => {
+  activeWalletAdapter = null;
   try {
     // Try Standard Disconnect
     const standardWallets = getStandardWallets();
