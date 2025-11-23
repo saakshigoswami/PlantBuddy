@@ -1,4 +1,6 @@
+
 export enum ViewMode {
+  HOME = 'HOME',
   DEVICE = 'DEVICE',
   MARKETPLACE = 'MARKETPLACE',
   WALLET = 'WALLET'

@@ -137,8 +137,8 @@ const App: React.FC = () => {
       setUploadStep('UPLOADING');
       
       // 3. REAL WALRUS UPLOAD VIA SDK
-      // We pass the fullScript string and the wallet adapter
-      const result = await uploadSessionViaWalrusSDK(fullScript, adapter);
+      // We pass the fullScript, wallet adapter, and the selected network
+      const result = await uploadSessionViaWalrusSDK(fullScript, adapter, selectedNetwork);
       console.log("Walrus Upload Result:", result);
 
       if (!result.blobId) throw new Error("Failed to get Blob ID from Walrus");
