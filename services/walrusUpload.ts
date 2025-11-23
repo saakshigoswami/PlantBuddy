@@ -3,7 +3,7 @@
 // Walrus Upload Service (REST API Implementation)
 
 // Configuration for Walrus Networks
-// We default to Testnet as it is the primary environment for the hackathon
+// We use the TESTNET endpoints which are generally more stable for hackathons
 const WALRUS_CONFIG = {
   TESTNET: {
     PUBLISHER: "https://publisher.walrus-testnet.walrus.space",
@@ -12,10 +12,6 @@ const WALRUS_CONFIG = {
   MAINNET: {
     PUBLISHER: "https://publisher.walrus.space",
     AGGREGATOR: "https://aggregator.walrus.space"
-  },
-  DEVNET: {
-     PUBLISHER: "https://publisher-devnet.walrus.space",
-     AGGREGATOR: "https://aggregator-devnet.walrus.space"
   }
 };
 
@@ -33,7 +29,8 @@ export async function uploadSessionViaWalrusSDK(
   network: 'TESTNET' | 'MAINNET' = 'TESTNET'
 ) {
   const json = typeof sessionData === "string" ? sessionData : JSON.stringify(sessionData);
-  const config = WALRUS_CONFIG[network];
+  // Ensure we fallback to TESTNET if an invalid network is passed
+  const config = WALRUS_CONFIG[network] || WALRUS_CONFIG.TESTNET;
   
   console.log(`Initiating upload to Walrus ${network}...`);
   
@@ -78,7 +75,7 @@ export async function uploadSessionViaWalrusSDK(
       
       // Check for CORS/Network errors
       if (error.name === 'TypeError' && error.message === 'Failed to fetch') {
-          throw new Error(`CORS Error: The Walrus ${network} Publisher blocked this browser request. This is common in pure web-apps. In production, use a backend relay.`);
+          throw new Error(`CORS Error: The Walrus ${network} Publisher blocked the request. Please disable ad-blockers or try a different browser profile for this demo.`);
       }
       
       throw error;

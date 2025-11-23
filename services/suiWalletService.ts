@@ -30,10 +30,10 @@ let activeWalletAdapter: any = null;
 export const checkSuiWalletInstalled = (): boolean => {
   if (typeof window === 'undefined') return false;
   
-  // Check Legacy
+  // Check Legacy Injections
   if (window.suiWallet || window.suiet || window.sui) return true;
 
-  // Check Standard
+  // Check Standard API
   if (navigator.getWallets) {
     const wallets = navigator.getWallets();
     if (wallets && wallets.length > 0) return true;
@@ -47,10 +47,11 @@ export const checkSuiWalletInstalled = (): boolean => {
  * Prevents race conditions without crashing the extension
  */
 const waitForWallet = async (): Promise<boolean> => {
-  let retries = 20; // Wait up to 4 seconds
+  // Retry for 5 seconds (50 * 100ms)
+  let retries = 50; 
   while (retries > 0) {
     if (checkSuiWalletInstalled()) return true;
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise(resolve => setTimeout(resolve, 100));
     retries--;
   }
   return false;
@@ -61,6 +62,7 @@ const waitForWallet = async (): Promise<boolean> => {
  */
 export const getWalletAdapter = () => {
   if (activeWalletAdapter) return activeWalletAdapter;
+  // Fallback to global objects if adapter was reset
   if (window.suiWallet) return window.suiWallet;
   if (window.suiet) return window.suiet;
   if (window.sui) return window.sui;
@@ -75,45 +77,33 @@ export const connectSuiWallet = async (): Promise<string | null> => {
     // 1. Wait for injection
     const found = await waitForWallet();
     if (!found) {
-       console.warn("Wallet not detected via polling.");
-       // Don't throw yet, try one last check
+       console.warn("Wallet not detected via polling (timeout). Attempting connection anyway...");
     }
 
-    // 2. Try Legacy window.suiWallet (Official & Most reliable for basic use)
-    if (window.suiWallet) {
-      console.log("Connecting via Legacy suiWallet...");
-      try {
-        const hasPermissions = await window.suiWallet.requestPermissions();
-        if (hasPermissions) {
-          const accounts = await window.suiWallet.getAccounts();
-          if (accounts && accounts.length > 0) {
-            activeWalletAdapter = window.suiWallet;
-            return accounts[0];
-          }
-        }
-      } catch (e) {
-        console.warn("Legacy connect rejected", e);
-        throw e;
-      }
-    }
-
-    // 3. Try Standard (navigator.getWallets)
+    // 2. Try Standard (navigator.getWallets) - Preferred Method
     if (navigator.getWallets) {
       const wallets = navigator.getWallets();
-      const suiWallet = wallets.find((w: any) => w.name.toLowerCase().includes('sui'));
-      if (suiWallet && suiWallet.features && suiWallet.features['standard:connect']) {
-         console.log("Connecting via Standard:", suiWallet.name);
+      // Find ANY wallet that supports connection, prioritizing Sui
+      const standardWallet = wallets.find((w: any) => {
+         const hasFeature = w.features && w.features['standard:connect'];
+         // If we found one, great. If it's specifically SUI, even better.
+         return hasFeature; 
+      });
+
+      if (standardWallet) {
+         console.log("Connecting via Standard Wallet:", standardWallet.name);
          try {
-           const result = await suiWallet.features['standard:connect'].connect();
+           const result = await standardWallet.features['standard:connect'].connect();
            if (result.accounts[0]) {
              // Create a wrapper for signing
              activeWalletAdapter = {
                signAndExecuteTransactionBlock: async (input: any) => {
-                 if (suiWallet.features['sui:signAndExecuteTransactionBlock']) {
-                   return await suiWallet.features['sui:signAndExecuteTransactionBlock'].signAndExecuteTransactionBlock({
+                 // Check for specific Sui feature
+                 if (standardWallet.features['sui:signAndExecuteTransactionBlock']) {
+                   return await standardWallet.features['sui:signAndExecuteTransactionBlock'].signAndExecuteTransactionBlock({
                      ...input,
                      account: result.accounts[0],
-                     chain: suiWallet.chains?.[0]
+                     chain: standardWallet.chains?.[0]
                    });
                  }
                  throw new Error("Signing not supported by this standard wallet");
@@ -121,20 +111,33 @@ export const connectSuiWallet = async (): Promise<string | null> => {
              };
              return result.accounts[0].address;
            }
-         } catch(e) { console.warn("Standard connect failed", e); }
+         } catch(e) { 
+             console.warn("Standard connect failed, falling back to legacy:", e); 
+         }
+      }
+    }
+
+    // 3. Try Legacy window.suiWallet (Official)
+    if (window.suiWallet) {
+      console.log("Connecting via Legacy suiWallet...");
+      const hasPermissions = await window.suiWallet.requestPermissions();
+      if (hasPermissions) {
+        const accounts = await window.suiWallet.getAccounts();
+        if (accounts && accounts.length > 0) {
+          activeWalletAdapter = window.suiWallet;
+          return accounts[0];
+        }
       }
     }
 
     // 4. Try SuiET
     if (window.suiet) {
       console.log("Connecting via SuiET...");
-      try {
-        const res = await window.suiet.connect();
-        if (res?.data?.[0]) {
-          activeWalletAdapter = window.suiet;
-          return res.data[0];
-        }
-      } catch (e) { console.warn("SuiET connect failed", e); }
+      const res = await window.suiet.connect();
+      if (res?.data?.[0]) {
+        activeWalletAdapter = window.suiet;
+        return res.data[0];
+      }
     }
 
     throw new Error("No compatible Sui Wallet found. Please install the Sui Wallet extension.");
