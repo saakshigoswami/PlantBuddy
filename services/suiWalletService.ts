@@ -47,16 +47,22 @@ let activeWalletAdapter: any = null; // Store the active adapter for signing
 
 // Listener for the 'standard:register-wallet' event
 if (typeof window !== 'undefined') {
-  window.addEventListener('wallet-standard:register-wallet', (event: any) => {
+  const registerListener = (event: any) => {
     const registerCallback = event.detail;
     registerCallback({
       register: (wallet: StandardWallet) => {
         if (!detectedWallets.find(w => w.name === wallet.name)) {
+          console.log("Wallet detected via Standard:", wallet.name);
           detectedWallets.push(wallet);
         }
       }
     });
-  });
+  };
+  window.addEventListener('wallet-standard:register-wallet', registerListener);
+  // Dispatch a ready event in case wallets are waiting for it
+  try {
+     window.dispatchEvent(new Event('wallet-standard:app-ready'));
+  } catch(e) {}
 }
 
 /**
@@ -68,12 +74,16 @@ const getStandardWallets = (): StandardWallet[] => {
 
   // 2. Check navigator.getWallets() if available
   if (navigator.getWallets) {
-    const navWallets = navigator.getWallets();
-    navWallets.forEach(w => {
-      if (!all.find(existing => existing.name === w.name)) {
-        all.push(w);
-      }
-    });
+    try {
+      const navWallets = navigator.getWallets();
+      navWallets.forEach(w => {
+        if (!all.find(existing => existing.name === w.name)) {
+          all.push(w);
+        }
+      });
+    } catch (e) {
+      console.warn("navigator.getWallets failed", e);
+    }
   }
   return all;
 };
@@ -119,18 +129,18 @@ export const getWalletAdapter = () => {
 
 /**
  * Connects to the wallet using the best available method.
- * Includes a retry mechanism for initial injection delay.
  */
 export const connectSuiWallet = async (): Promise<string | null> => {
   try {
-    // 1. Wait for injection (Fixes "Extension not installed" race condition)
-    const isInstalled = await waitForWallet();
-    if (!isInstalled) {
-       throw new Error("Sui Wallet extension not found after waiting.");
+    // 1. Attempt detection wait (Soft Fail)
+    const isDetected = await waitForWallet();
+    if (!isDetected) {
+       console.warn("Wallet detection timed out. Attempting brute-force connection...");
     }
 
     // 2. Try Standard Connection (Preferred)
     const standardWallets = getStandardWallets();
+    // Prioritize 'Sui Wallet' but fallback to any wallet with 'sui' in name
     const targetWallet = standardWallets.find(w => w.name === 'Sui Wallet') || 
                          standardWallets.find(w => w.name.toLowerCase().includes('sui'));
 
@@ -159,7 +169,7 @@ export const connectSuiWallet = async (): Promise<string | null> => {
       }
     }
 
-    // 3. Try Legacy window.suiWallet
+    // 3. Try Legacy window.suiWallet (Official)
     if (window.suiWallet) {
       console.log("Connecting via Legacy suiWallet...");
       const hasPermissions = await window.suiWallet.requestPermissions();
@@ -172,7 +182,7 @@ export const connectSuiWallet = async (): Promise<string | null> => {
       }
     }
 
-    // 4. Try SuiET
+    // 4. Try SuiET (Common Alternative)
     if (window.suiet) {
       console.log("Connecting via SuiET...");
       const result = await window.suiet.connect();
@@ -181,8 +191,24 @@ export const connectSuiWallet = async (): Promise<string | null> => {
         return result.data[0];
       }
     }
+    
+    // 5. Try Generic window.sui
+    if (window.sui) {
+       console.log("Connecting via Generic window.sui...");
+       // Some generic wallets might use different connect signatures, assuming minimal standard here
+       try {
+         const permissions = await window.sui.requestPermissions();
+         if(permissions) {
+             const accounts = await window.sui.getAccounts();
+             if(accounts[0]) {
+                 activeWalletAdapter = window.sui;
+                 return accounts[0];
+             }
+         }
+       } catch(e) { console.warn("Generic connect failed", e); }
+    }
 
-    throw new Error("Wallet found but connection failed or was rejected.");
+    throw new Error("No compatible Sui Wallet found. Please install the Sui Wallet extension.");
 
   } catch (error) {
     console.error("Wallet Connection Error:", error);

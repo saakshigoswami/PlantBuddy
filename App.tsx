@@ -100,9 +100,19 @@ const App: React.FC = () => {
   };
 
   const processUpload = async () => {
-    const adapter = getWalletAdapter();
+    let adapter = getWalletAdapter();
+    
+    // Auto-reconnect attempt if address is known but adapter is missing (e.g. after refresh)
+    if (!adapter && walletAddress) {
+       try {
+         console.log("Lost adapter connection, attempting silent reconnect...");
+         await connectSuiWallet();
+         adapter = getWalletAdapter();
+       } catch(e) { console.warn("Silent reconnect failed", e); }
+    }
+
     if (!adapter) {
-      alert("Please connect your Sui Wallet first to sign the upload transaction.");
+      alert("Wallet connection lost. Please click the Wallet button in the top right to reconnect.");
       return;
     }
 
