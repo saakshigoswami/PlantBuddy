@@ -23,31 +23,31 @@ interface DeviceMonitorProps {
 // Initial dummy data for the chart
 const INITIAL_DATA = Array(50).fill(0).map((_, i) => ({ time: i, val: 0 }));
 
-// --- BIO SYNTH ENGINE (Web Audio API) ---
+// --- BIO SYNTH ENGINE (Violin Emulation) ---
 class BioSynth {
   ctx: AudioContext | null = null;
   masterGain: GainNode | null = null;
   
-  // Oscillators
-  oscFund: OscillatorNode | null = null;
-  oscH2: OscillatorNode | null = null; // 2nd Harmonic
-  oscH3: OscillatorNode | null = null; // 3rd Harmonic
-  oscSub: OscillatorNode | null = null; // Sub Bass
+  // Violin Components
+  osc1: OscillatorNode | null = null; // Main String
+  osc2: OscillatorNode | null = null; // Octave Harmonic/Body
+  
+  // Vibrato (Essential for Violin sound)
+  lfo: OscillatorNode | null = null;
+  lfoGain: GainNode | null = null;
 
-  // Gains for mixing
-  gainFund: GainNode | null = null;
-  gainH2: GainNode | null = null;
-  gainH3: GainNode | null = null;
-  gainSub: GainNode | null = null;
+  // Filter (To simulate wood body resonance)
+  filter: BiquadFilterNode | null = null;
 
   // Params
   params = {
-    fmin: 110,
-    fmax: 660,
-    ampMax: 1.0, // Boosted max volume
-    glide: 0.1, // Time constant for smoothing
-    harmonics: 0.15,
-    subLevel: 0.25
+    fmin: 196, // G3 (Violin lowest string)
+    fmax: 1000,
+    ampMax: 0.8, 
+    glide: 0.2, // Bowing friction (slower attack)
+    vibratoSpeed: 6.0, // Hz
+    vibratoDepth: 4.0, // Pitch wobble amount
+    brightness: 2000 // Filter cutoff
   };
 
   constructor() {}
@@ -57,30 +57,52 @@ class BioSynth {
     const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
     this.ctx = new AudioContext();
     
+    // Master Output
     this.masterGain = this.ctx.createGain();
-    this.masterGain.gain.value = 0; // Start silent
+    this.masterGain.gain.value = 0; 
+    
+    // Filter (Resonance)
+    this.filter = this.ctx.createBiquadFilter();
+    this.filter.type = 'lowpass';
+    this.filter.Q.value = 1.0; // Slight resonance peak
+    this.filter.frequency.value = this.params.brightness;
+
+    // Connect Chain: Filter -> Master -> Out
+    this.filter.connect(this.masterGain);
     this.masterGain.connect(this.ctx.destination);
 
-    // Create Nodes
-    this.oscFund = this.ctx.createOscillator();
-    this.oscH2 = this.ctx.createOscillator();
-    this.oscH3 = this.ctx.createOscillator();
-    this.oscSub = this.ctx.createOscillator();
+    // Vibrato LFO
+    this.lfo = this.ctx.createOscillator();
+    this.lfo.type = 'sine';
+    this.lfo.frequency.value = this.params.vibratoSpeed;
+    
+    this.lfoGain = this.ctx.createGain();
+    this.lfoGain.gain.value = this.params.vibratoDepth;
+    this.lfo.connect(this.lfoGain);
 
-    this.gainFund = this.ctx.createGain();
-    this.gainH2 = this.ctx.createGain();
-    this.gainH3 = this.ctx.createGain();
-    this.gainSub = this.ctx.createGain();
+    // Oscillators (Sawtooth is best for bowed strings)
+    this.osc1 = this.ctx.createOscillator();
+    this.osc1.type = 'sawtooth';
 
-    // Wiring
-    this.oscFund.connect(this.gainFund).connect(this.masterGain);
-    this.oscH2.connect(this.gainH2).connect(this.masterGain);
-    this.oscH3.connect(this.gainH3).connect(this.masterGain);
-    this.oscSub.connect(this.gainSub).connect(this.masterGain);
+    this.osc2 = this.ctx.createOscillator();
+    this.osc2.type = 'sawtooth';
+    
+    // Detune osc2 slightly for chorus/thickness
+    this.osc2.detune.value = 10; 
 
-    // Start Oscillators
+    // Apply Vibrato to both oscillators
+    this.lfoGain.connect(this.osc1.frequency);
+    this.lfoGain.connect(this.osc2.frequency);
+
+    // Connect Oscillators to Filter
+    this.osc1.connect(this.filter);
+    this.osc2.connect(this.filter);
+
+    // Start everything
     const now = this.ctx.currentTime;
-    [this.oscFund, this.oscH2, this.oscH3, this.oscSub].forEach(osc => osc?.start(now));
+    this.osc1.start(now);
+    this.osc2.start(now);
+    this.lfo.start(now);
   }
 
   resume() {
@@ -94,56 +116,50 @@ class BioSynth {
   }
 
   update(raw: number, threshold: number) {
-    if (!this.ctx || !this.masterGain) return;
+    if (!this.ctx || !this.masterGain || !this.osc1 || !this.osc2) return;
 
     const now = this.ctx.currentTime;
     const p = this.params;
-    const timeConstant = p.glide;
 
-    // GATE LOGIC: HARD CUT
-    // If raw value is less than or equal to threshold, silence immediately.
+    // GATE LOGIC: BOW LIFT
+    // If raw value is less than or equal to threshold, stop bowing (silence).
     if (raw <= threshold) {
+      // Fast release but not instant click
       this.masterGain.gain.cancelScheduledValues(now);
-      this.masterGain.gain.setValueAtTime(0, now); 
+      this.masterGain.gain.setTargetAtTime(0, now, 0.1); 
       return;
     }
 
-    // AMPLITUDE MAPPING
-    const maxExpected = 120; // Soft cap for raw value
+    // AMPLITUDE MAPPING (Bow Pressure)
+    const maxExpected = 120; 
     const inputRange = Math.max(1, maxExpected - threshold); 
     
     let normalizedInput = (raw - threshold) / inputRange;
     normalizedInput = Math.min(1.0, Math.max(0, normalizedInput));
 
-    // Volume Floor: Start at 30% volume immediately upon crossing threshold
-    const minVol = 0.3; 
-    const maxVol = 1.0;
-    const scaledAmp = minVol + (normalizedInput * (maxVol - minVol));
+    // Violin Volume: Needs minimum presence
+    const minVol = 0.2; 
+    const maxVol = p.ampMax;
+    const targetAmp = minVol + (normalizedInput * (maxVol - minVol));
+
+    // FREQUENCY MAPPING (Finger Position)
+    // Non-linear mapping usually feels more musical
+    const targetFreq = p.fmin + (normalizedInput * (p.fmax - p.fmin));
+
+    // FILTER MAPPING (Tone brightness increases with intensity)
+    const targetBrightness = 800 + (normalizedInput * 3000);
+
+    // UPDATE AUDIO PARAMS
+    this.masterGain.gain.setTargetAtTime(targetAmp, now, p.glide); // Bowing physics
     
-    const targetAmp = scaledAmp * p.ampMax;
+    // Smooth frequency slide (Portamento)
+    this.osc1.frequency.setTargetAtTime(targetFreq, now, 0.1);
+    this.osc2.frequency.setTargetAtTime(targetFreq, now, 0.1);
 
-    // FREQUENCY MAPPING
-    // Map normalized input to frequency range
-    const targetFreq = p.fmin + normalizedInput * (p.fmax - p.fmin);
-
-    // Update Master Volume
-    this.masterGain.gain.cancelScheduledValues(now);
-    this.masterGain.gain.setTargetAtTime(targetAmp, now, timeConstant);
-
-    // Update Frequencies
-    if (targetAmp > 0.001) { 
-        this.oscFund?.frequency.setTargetAtTime(targetFreq, now, timeConstant);
-        this.oscH2?.frequency.setTargetAtTime(targetFreq * 2, now, timeConstant);
-        this.oscH3?.frequency.setTargetAtTime(targetFreq * 3, now, timeConstant);
-        this.oscSub?.frequency.setTargetAtTime(targetFreq * 0.5, now, timeConstant);
-    }
-
-    // Mix Levels
-    const harmScale = p.harmonics;
-    this.gainFund?.gain.setTargetAtTime(1.0, now, timeConstant);
-    this.gainH2?.gain.setTargetAtTime(harmScale, now, timeConstant);
-    this.gainH3?.gain.setTargetAtTime(harmScale * 0.6, now, timeConstant);
-    this.gainSub?.gain.setTargetAtTime(p.subLevel, now, timeConstant);
+    this.filter?.frequency.setTargetAtTime(targetBrightness, now, 0.2);
+    
+    // Vibrato increases slightly with intensity
+    this.lfoGain?.gain.setTargetAtTime(p.vibratoDepth + (normalizedInput * 2), now, 0.5);
   }
   
   destroy() {
@@ -827,7 +843,7 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
              <div className="flex flex-col items-center justify-center text-pink-400 font-mono text-xs gap-1 py-1">
                 <div className="flex items-center gap-2">
                    <Music className="w-4 h-4" />
-                   Bio-Sonification Active
+                   Bio-Sonification Active (Violin Mode)
                 </div>
                 <div className="text-slate-500">
                    (Signal: {arduinoState.raw} / Threshold: {soundThreshold})
