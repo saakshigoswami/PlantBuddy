@@ -1,0 +1,7 @@
+{
+  "name": "FloraFi - Decentralized Plant Data Network",
+  "description": "A Data Economy marketplace for bio-interactive plant interfaces. Collects capacitance and sentiment data, stores it on Walrus, and monetizes it via a decentralized exchange.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
