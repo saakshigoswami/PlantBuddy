@@ -37,8 +37,12 @@ export async function uploadSessionViaWalrusSDK(
   try {
       // 1. PUT to Publisher
       // We use epochs=1 for short-term storage default.
+      // IMPORTANT: Added Content-Type header to satisfy CORS preflight
       const response = await fetch(`${config.PUBLISHER}/v1/store?epochs=1`, {
         method: "PUT",
+        headers: {
+            "Content-Type": "application/json"
+        },
         body: json,
       });
 
@@ -53,14 +57,16 @@ export async function uploadSessionViaWalrusSDK(
       let blobId: string | undefined;
       let certificate: any | undefined;
 
+      // Handle different response structures from Walrus versions
       if (data.newlyCreated) {
         blobId = data.newlyCreated.blobObject.blobId;
-        certificate = data.newlyCreated.encodedSize; // Simplified for metadata
+        certificate = data.newlyCreated.encodedSize; 
       } else if (data.alreadyCertified) {
         blobId = data.alreadyCertified.blobId;
       }
 
       if (!blobId) {
+        console.error("Unexpected Walrus Response:", data);
         throw new Error("Upload successful but no Blob ID returned.");
       }
 
@@ -75,7 +81,7 @@ export async function uploadSessionViaWalrusSDK(
       
       // Check for CORS/Network errors
       if (error.name === 'TypeError' && error.message === 'Failed to fetch') {
-          throw new Error(`CORS Error: The Walrus ${network} Publisher blocked the request. Please disable ad-blockers or try a different browser profile for this demo.`);
+          throw new Error(`Network/CORS Error: Unable to reach Walrus ${network}. If you are on localhost, this might be a browser restriction. Try using a CORS extension or deploying the app.`);
       }
       
       throw error;
