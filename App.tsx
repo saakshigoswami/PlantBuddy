@@ -67,11 +67,37 @@ const App: React.FC = () => {
       }
     } catch (error: any) {
       console.error(error);
-      if (error.message && error.message.includes("extension not found")) {
-         alert("Sui Wallet extension is not installed! Please install it from the Chrome Web Store to connect.");
-         window.open("https://chrome.google.com/webstore/detail/sui-wallet/opcgpfmipidbgpenhmajoajpbnyfyjmg", "_blank");
+      const errorMsg = error.message || "Unknown error";
+      
+      if (errorMsg.includes("No compatible Sui Wallet found")) {
+        const troubleshooting = `Sui Wallet Extension Not Detected
+
+Please follow these steps:
+1. Go to chrome://extensions/ (or edge://extensions/)
+2. Find "Sui Wallet" and ensure it's ENABLED
+3. Click the refresh icon (🔄) on the extension
+4. Unlock your wallet in the extension popup
+5. Refresh this page (Ctrl+Shift+R)
+
+Check the browser console (F12) for detailed debug info.
+
+You can also type: window.checkWalletStatus() in the console to check wallet status.`;
+        
+        alert(troubleshooting);
+        // Open extensions page (Chrome/Edge)
+        try {
+          const chromeWindow = window as any;
+          if (chromeWindow.chrome && chromeWindow.chrome.runtime) {
+            window.open("chrome://extensions/", "_blank");
+          }
+        } catch (e) {
+          // Silently fail if chrome:// protocol is not available
+        }
+      } else if (errorMsg.includes("extension not found")) {
+        alert("Sui Wallet extension is not installed! Please install it from the Chrome Web Store to connect.");
+        window.open("https://chrome.google.com/webstore/detail/sui-wallet/opcgpfmipidbgpenhmajoajpbnyfyjmg", "_blank");
       } else {
-         alert("Failed to connect wallet: " + error.message);
+        alert("Failed to connect wallet: " + errorMsg.split('\n')[0]);
       }
     } finally {
       setIsConnecting(false);

@@ -106,18 +106,44 @@ export const checkSuiWalletInstalled = (): boolean => {
 };
 
 /**
- * Waits for a wallet to appear (Polling mechanism)
+ * Waits for a wallet to appear (Polling mechanism with event listeners)
  * Prevents race conditions without crashing the extension
  */
 const waitForWallet = async (): Promise<boolean> => {
-  // Retry for 10 seconds (100 * 100ms) to ensure slow extensions load
-  let retries = 100; 
-  while (retries > 0) {
-    if (checkSuiWalletInstalled()) return true;
-    await new Promise(resolve => setTimeout(resolve, 100));
+  // First check immediately
+  if (checkSuiWalletInstalled()) return true;
+  
+  // Set up event listener for wallet injection (some wallets use this)
+  let walletFound = false;
+  const checkWallet = () => {
+    if (checkSuiWalletInstalled()) {
+      walletFound = true;
+    }
+  };
+  
+  // Listen for custom events that wallets might dispatch
+  const handleWalletEvent = () => {
+    checkWallet();
+  };
+  
+  // Add event listeners
+  window.addEventListener('suiWallet#initialized', handleWalletEvent);
+  window.addEventListener('wallet-standard:app-ready', handleWalletEvent);
+  
+  // Also poll more aggressively - check every 50ms for 15 seconds (300 checks)
+  let retries = 300; 
+  while (retries > 0 && !walletFound) {
+    checkWallet();
+    if (walletFound) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
     retries--;
   }
-  return false;
+  
+  // Clean up event listeners
+  window.removeEventListener('suiWallet#initialized', handleWalletEvent);
+  window.removeEventListener('wallet-standard:app-ready', handleWalletEvent);
+  
+  return walletFound;
 };
 
 /**
@@ -138,14 +164,28 @@ export const getWalletAdapter = () => {
 export const connectSuiWallet = async (): Promise<string | null> => {
   try {
     // Debug: Log all available wallet objects
+    console.log("🔍 Starting wallet detection...");
     debugWalletObjects();
     
-    // 1. Wait for injection
+    // 1. Wait for injection with longer timeout and event listeners
+    console.log("⏳ Waiting for wallet injection (up to 15 seconds)...");
     const found = await waitForWallet();
     if (!found) {
-       console.warn("Wallet not detected via polling (timeout). Attempting connection anyway...");
+       console.warn("⚠️ Wallet not detected via polling (timeout). Attempting connection anyway...");
+       console.warn("💡 This usually means the extension isn't injecting. Check the troubleshooting steps below.");
        // Debug again after timeout
        debugWalletObjects();
+       
+       // Give it one more second - sometimes extensions inject right after page load
+       console.log("⏳ Giving extension one more second to inject...");
+       await new Promise(resolve => setTimeout(resolve, 1000));
+       if (checkSuiWalletInstalled()) {
+         console.log("✅ Wallet detected after additional wait!");
+       } else {
+         debugWalletObjects();
+       }
+    } else {
+      console.log("✅ Wallet detected!");
     }
 
     // 2. Try Standard (navigator.getWallets) - Preferred Method
@@ -326,7 +366,33 @@ export const connectSuiWallet = async (): Promise<string | null> => {
       }
     }
 
-    throw new Error("No compatible Sui Wallet found. Please install the Sui Wallet extension.");
+    // Provide detailed error message with troubleshooting steps
+    const errorMessage = `No compatible Sui Wallet found. 
+
+Troubleshooting steps:
+1. Make sure the Sui Wallet extension is installed and enabled
+   - Go to chrome://extensions/ (or edge://extensions/)
+   - Find "Sui Wallet" and ensure it's enabled
+   - Click the refresh icon on the extension to reload it
+
+2. Unlock your wallet
+   - Open the Sui Wallet extension popup
+   - Make sure it's unlocked and ready
+
+3. Refresh this page after enabling the extension
+   - Press Ctrl+Shift+R (or Cmd+Shift+R on Mac) for a hard refresh
+
+4. Check browser permissions
+   - Some browsers require explicit permission for extensions to inject scripts
+   - Try disabling other extensions that might interfere
+
+5. Try a different browser
+   - If using Chrome, try Edge or Firefox (with Sui Wallet installed)
+
+If the extension is installed and enabled but still not detected, there may be a compatibility issue.`;
+
+    console.error(errorMessage);
+    throw new Error(errorMessage);
 
   } catch (error) {
     console.error("Wallet Connection Error:", error);
@@ -343,3 +409,41 @@ export const disconnectSuiWallet = async (): Promise<void> => {
     console.warn("Disconnect failed", e);
   }
 };
+
+/**
+ * Helper function to manually check wallet status (can be called from console)
+ * Usage: In browser console, type: window.checkWalletStatus()
+ */
+export const checkWalletStatus = () => {
+  console.log("=== Manual Wallet Status Check ===");
+  debugWalletObjects();
+  
+  const status = {
+    suiWallet: !!window.suiWallet,
+    suiet: !!window.suiet,
+    sui: !!window.sui,
+    standardAPI: typeof navigator !== 'undefined' && !!navigator.getWallets,
+    detected: checkSuiWalletInstalled()
+  };
+  
+  console.log("Status Summary:", status);
+  
+  if (!status.detected) {
+    console.log("\n❌ Wallet not detected. Please:");
+    console.log("1. Go to chrome://extensions/");
+    console.log("2. Find 'Sui Wallet' extension");
+    console.log("3. Make sure it's enabled (toggle should be blue/on)");
+    console.log("4. Click the refresh icon (🔄) on the extension");
+    console.log("5. Unlock your wallet in the extension popup");
+    console.log("6. Refresh this page (Ctrl+Shift+R)");
+  } else {
+    console.log("\n✅ Wallet detected!");
+  }
+  
+  return status;
+};
+
+// Make it available globally for debugging
+if (typeof window !== 'undefined') {
+  (window as any).checkWalletStatus = checkWalletStatus;
+}
