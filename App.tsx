@@ -67,37 +67,11 @@ const App: React.FC = () => {
       }
     } catch (error: any) {
       console.error(error);
-      const errorMsg = error.message || "Unknown error";
-      
-      if (errorMsg.includes("No compatible Sui Wallet found")) {
-        const troubleshooting = `Sui Wallet Extension Not Detected
-
-Please follow these steps:
-1. Go to chrome://extensions/ (or edge://extensions/)
-2. Find "Sui Wallet" and ensure it's ENABLED
-3. Click the refresh icon (🔄) on the extension
-4. Unlock your wallet in the extension popup
-5. Refresh this page (Ctrl+Shift+R)
-
-Check the browser console (F12) for detailed debug info.
-
-You can also type: window.checkWalletStatus() in the console to check wallet status.`;
-        
-        alert(troubleshooting);
-        // Open extensions page (Chrome/Edge)
-        try {
-          const chromeWindow = window as any;
-          if (chromeWindow.chrome && chromeWindow.chrome.runtime) {
-            window.open("chrome://extensions/", "_blank");
-          }
-        } catch (e) {
-          // Silently fail if chrome:// protocol is not available
-        }
-      } else if (errorMsg.includes("extension not found")) {
-        alert("Sui Wallet extension is not installed! Please install it from the Chrome Web Store to connect.");
-        window.open("https://chrome.google.com/webstore/detail/sui-wallet/opcgpfmipidbgpenhmajoajpbnyfyjmg", "_blank");
+      if (error.message && error.message.includes("extension not found")) {
+         alert("Sui Wallet extension is not installed! Please install it from the Chrome Web Store to connect.");
+         window.open("https://chrome.google.com/webstore/detail/sui-wallet/opcgpfmipidbgpenhmajoajpbnyfyjmg", "_blank");
       } else {
-        alert("Failed to connect wallet: " + errorMsg.split('\n')[0]);
+         alert("Failed to connect wallet: " + error.message);
       }
     } finally {
       setIsConnecting(false);
@@ -126,19 +100,9 @@ You can also type: window.checkWalletStatus() in the console to check wallet sta
   };
 
   const processUpload = async () => {
-    let adapter = getWalletAdapter();
-    
-    // Auto-reconnect attempt if address is known but adapter is missing (e.g. after refresh)
-    if (!adapter && walletAddress) {
-       try {
-         console.log("Lost adapter connection, attempting silent reconnect...");
-         await connectSuiWallet();
-         adapter = getWalletAdapter();
-       } catch(e) { console.warn("Silent reconnect failed", e); }
-    }
-
+    const adapter = getWalletAdapter();
     if (!adapter) {
-      alert("Wallet connection lost. Please click the Wallet button in the top right to reconnect.");
+      alert("Please connect your Sui Wallet first to sign the upload transaction.");
       return;
     }
 
@@ -173,8 +137,8 @@ You can also type: window.checkWalletStatus() in the console to check wallet sta
       setUploadStep('UPLOADING');
       
       // 3. REAL WALRUS UPLOAD VIA SDK
-      // We pass the fullScript, wallet adapter, and the selected network
-      const result = await uploadSessionViaWalrusSDK(fullScript, adapter, selectedNetwork);
+      // We pass the fullScript string and the wallet adapter
+      const result = await uploadSessionViaWalrusSDK(fullScript, adapter);
       console.log("Walrus Upload Result:", result);
 
       if (!result.blobId) throw new Error("Failed to get Blob ID from Walrus");
