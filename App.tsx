@@ -1,10 +1,17 @@
 
 import React, { useState, useEffect } from 'react';
+import { 
+  useConnectWallet, 
+  useCurrentAccount, 
+  useDisconnectWallet, 
+  useSignAndExecuteTransaction, 
+  useWallets 
+} from '@mysten/dapp-kit';
+import type { WalletWithRequiredFeatures } from '@mysten/wallet-standard';
 import { ViewMode, PlantDataPoint, MOCK_BLOBS, DataBlob } from './types';
 import { analyzeDatasetValue } from './services/geminiService';
 // Import new SDK services
 import { uploadSessionViaWalrusSDK, certifyBlobOnChain } from './services/walrusUpload';
-import { connectSuiWallet, disconnectSuiWallet, getWalletAdapter } from './services/suiWalletService';
 import DeviceMonitor from './components/DeviceMonitor';
 import DataMarketplace from './components/DataMarketplace';
 import LandingPage from './components/LandingPage';
@@ -17,9 +24,15 @@ type WalrusNetwork = 'TESTNET' | 'MAINNET';
 const App: React.FC = () => {
   const [view, setView] = useState<ViewMode>(ViewMode.HOME);
   
-  // Wallet State
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [isConnecting, setIsConnecting] = useState(false);
+  const currentAccount = useCurrentAccount();
+  const { mutateAsync: connectWallet, isPending: isConnecting } = useConnectWallet();
+  const { mutateAsync: disconnectWallet } = useDisconnectWallet();
+  const { mutateAsync: signAndExecuteTransactionBlock } = useSignAndExecuteTransaction();
+  const wallets = useWallets();
+  const [isWalletPickerOpen, setIsWalletPickerOpen] = useState(false);
+  const [walletConnectError, setWalletConnectError] = useState<string | null>(null);
+
+  const walletAddress = currentAccount?.address ?? null;
   
   const [marketplaceListings, setMarketplaceListings] = useState<DataBlob[]>(MOCK_BLOBS);
   
@@ -49,33 +62,40 @@ const App: React.FC = () => {
     setHasKey(true);
   }, []);
 
+  const startWalletConnection = async (wallet: WalletWithRequiredFeatures) => {
+    try {
+      setWalletConnectError(null);
+      await connectWallet({ wallet });
+      setIsWalletPickerOpen(false);
+    } catch (error: any) {
+      console.error("Failed to connect wallet", error);
+      setWalletConnectError(error.message || "Failed to connect wallet.");
+    }
+  };
+
   const handleConnectWallet = async () => {
     if (walletAddress) {
-      // Disconnect logic
-      await disconnectSuiWallet();
-      setWalletAddress(null);
+      try {
+        await disconnectWallet();
+      } catch (error: any) {
+        console.error("Failed to disconnect wallet", error);
+        alert(error.message || "Failed to disconnect wallet.");
+      }
       return;
     }
 
-    try {
-      setIsConnecting(true);
-      const address = await connectSuiWallet();
-      if (address) {
-        setWalletAddress(address);
-      } else {
-        alert("Connection rejected by user.");
-      }
-    } catch (error: any) {
-      console.error(error);
-      if (error.message && error.message.includes("extension not found")) {
-         alert("Sui Wallet extension is not installed! Please install it from the Chrome Web Store to connect.");
-         window.open("https://chrome.google.com/webstore/detail/sui-wallet/opcgpfmipidbgpenhmajoajpbnyfyjmg", "_blank");
-      } else {
-         alert("Failed to connect wallet: " + error.message);
-      }
-    } finally {
-      setIsConnecting(false);
+    if (!wallets.length) {
+      alert("No Sui-compatible wallets detected. Please install Sui Wallet (Slush) or another wallet standard extension.");
+      return;
     }
+
+    if (wallets.length === 1) {
+      await startWalletConnection(wallets[0]);
+      return;
+    }
+
+    setWalletConnectError(null);
+    setIsWalletPickerOpen(true);
   };
 
   const handleSaveApiKey = () => {
@@ -100,11 +120,11 @@ const App: React.FC = () => {
   };
 
   const processUpload = async () => {
-    const adapter = getWalletAdapter();
-    if (!adapter) {
+    if (!walletAddress) {
       alert("Please connect your Sui Wallet first to sign the upload transaction.");
       return;
     }
+    const adapter = { signAndExecuteTransactionBlock };
 
     try {
       setUploadStep('ANALYZING');
@@ -137,8 +157,8 @@ const App: React.FC = () => {
       setUploadStep('UPLOADING');
       
       // 3. REAL WALRUS UPLOAD VIA SDK
-      // We pass the fullScript string and the wallet adapter
-      const result = await uploadSessionViaWalrusSDK(fullScript, adapter);
+      // We pass the fullScript string, wallet adapter, and selected network
+      const result = await uploadSessionViaWalrusSDK(fullScript, adapter, selectedNetwork);
       console.log("Walrus Upload Result:", result);
 
       if (!result.blobId) throw new Error("Failed to get Blob ID from Walrus");
@@ -290,6 +310,55 @@ const App: React.FC = () => {
       <main className="pt-24 px-4 max-w-7xl mx-auto min-h-screen">
         {renderView()}
       </main>
+
+      {/* Wallet Picker Modal */}
+      <Modal
+        isOpen={isWalletPickerOpen}
+        onClose={() => { setIsWalletPickerOpen(false); setWalletConnectError(null); }}
+        title="Connect a Wallet"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-300">
+            Choose one of the detected wallets to connect to PlantBuddy on Sui.
+          </p>
+          {walletConnectError && (
+            <div className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded p-2 font-mono">
+              {walletConnectError}
+            </div>
+          )}
+          <div className="space-y-3">
+            {wallets.map((wallet) => (
+              <button
+                key={`${wallet.name}-${wallet.version}`}
+                onClick={() => startWalletConnection(wallet)}
+                className="w-full flex items-center gap-3 p-3 rounded-xl border border-slate-700 bg-slate-800/50 hover:border-brand-pink hover:bg-slate-800 transition-all text-left"
+                disabled={isConnecting}
+              >
+                <div className="w-10 h-10 rounded-xl bg-slate-900 flex items-center justify-center overflow-hidden border border-slate-700">
+                  {wallet.icon ? (
+                    <img src={wallet.icon} alt={wallet.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <Wallet className="w-5 h-5 text-slate-400" />
+                  )}
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-white">{wallet.name}</p>
+                  <p className="text-xs text-slate-400">{wallet.chains?.[0] || 'Unknown chain'}</p>
+                </div>
+                {isConnecting && (
+                  <Loader2 className="w-4 h-4 text-brand-accent animate-spin" />
+                )}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => { setIsWalletPickerOpen(false); setWalletConnectError(null); }}
+            className="w-full py-2 text-sm font-semibold rounded-lg border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </Modal>
 
       {/* Settings Modal */}
       <Modal 
