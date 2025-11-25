@@ -42,7 +42,7 @@ const NewHero: React.FC<NewHeroProps> = ({ onStart }) => {
           {/* Center Content */}
           <div className="text-center animate-fade-in-up">
             <p className="text-white/90 text-base sm:text-lg mb-6 leading-relaxed">
-              An IoT device that wraps around your plant and you can talk to your plant or play it like a piano.
+              An IoT device that wraps around your plant. Now you can talk to your plant or play it like a piano.
             </p>
             <p className="text-white/80 text-sm mb-4">
               A gentle, private, and empathetic plant companion.
