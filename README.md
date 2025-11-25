@@ -1,3 +1,6 @@
+<img width="1911" height="945" alt="image" src="https://github.com/user-attachments/assets/2097733d-a901-4c38-88aa-10712d2abe43" />
+
+
 
 # 🌿 **PlantBuddy — An AI Enabled Decentralized Plant Bot**
 
@@ -33,6 +36,9 @@ You get a magical interface to interact with your plants — scientifically and 
 
 ### 🎤 **Talk Mode — Talk Directly With Your Plant**
 
+<img width="1913" height="938" alt="image" src="https://github.com/user-attachments/assets/85f869bc-558c-4385-9f5b-b682266bb26a" />
+
+
 * Uses AI (Gemini) to create personality-based responses
 * Converts plant touch patterns into conversation context
 * Voices the plant back using Web Speech API
@@ -43,6 +49,9 @@ You get a magical interface to interact with your plants — scientifically and 
 * Plant touch manipulates pitch, tempo, and resonance
 
 ### 🌐 **Decentralized Upload to Walrus**
+
+<img width="1914" height="946" alt="image" src="https://github.com/user-attachments/assets/f3230aa9-cbff-4f46-a56c-0330414cea58" />
+
 
 Mint any plant interaction session to Walrus Testnet or Mainnet:
 
