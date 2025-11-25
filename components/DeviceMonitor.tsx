@@ -177,7 +177,18 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   
   // Simulation State
-  const [isSimulationEnabled, setIsSimulationEnabled] = useState(false);
+  const [isSimulationEnabled, setIsSimulationEnabled] = useState(true); // Enable by default for demo
+  const [isSimulatedTouching, setIsSimulatedTouching] = useState(false);
+  const simulatedTouchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (simulatedTouchTimeoutRef.current) {
+        clearTimeout(simulatedTouchTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Settings
   const [soundThreshold, setSoundThreshold] = useState(50); // Default threshold
@@ -512,7 +523,9 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
   useEffect(() => {
     if (isConnected || !isSimulationEnabled) return;
     const update = () => {
-      const targetPeak = isTouchingRef.current ? 85 : 45; 
+      // Use the actual value from valueRef if it's been set by simulated touch
+      const currentValue = valueRef.current > 0 ? valueRef.current : (isTouchingRef.current ? 85 : 45);
+      const targetPeak = isTouchingRef.current ? currentValue : 45; 
       simulatedPeakRef.current = simulatedPeakRef.current + (targetPeak - simulatedPeakRef.current) * 0.1;
       const noise = (Math.random() - 0.5) * 2; 
       const currentPeak = simulatedPeakRef.current + noise;
@@ -521,6 +534,14 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
       hardwareBufferRef.current.interpolated = interpolated;
       hardwareBufferRef.current.raw = Math.round(currentPeak); // Ensure Raw follows peak
       hardwareBufferRef.current.baseline = 45;
+      
+      // Update arduinoState for chart display
+      setArduinoState(prev => ({
+        ...prev,
+        raw: Math.round(currentPeak),
+        interpolated: interpolated,
+        topPoint: Math.round(currentPeak)
+      }));
       
       if (Math.random() > 0.8) {
          const simLine = `TOP:${Math.floor(currentPeak)},VAL:${Math.floor(Math.max(0, currentPeak-45))},INT:${interpolated/10}`;
@@ -546,6 +567,74 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
   };
 
   const handleTouchEnd = () => isTouchingRef.current = false;
+
+  // Simulated touch handler for demo (when no device connected)
+  const handleSimulatedTouch = (event: React.MouseEvent | React.TouchEvent) => {
+    if (isConnected) return; // Don't simulate if real device is connected
+    
+    event.preventDefault();
+    event.stopPropagation();
+    
+    // Generate a realistic touch value (between 30-90)
+    const touchIntensity = Math.floor(Math.random() * 60) + 30; // 30-90 range
+    const touchDuration = Math.random() * 1000 + 500; // 500-1500ms
+    
+    // Set touching state
+    isTouchingRef.current = true;
+    setIsSimulatedTouching(true);
+    
+    // Update the value immediately for visual feedback
+    valueRef.current = touchIntensity;
+    hardwareBufferRef.current.raw = touchIntensity;
+    hardwareBufferRef.current.interpolated = touchIntensity * 10;
+    hardwareBufferRef.current.topPoint = touchIntensity;
+    
+    // Trigger touch start
+    handleTouchStart();
+    
+    // Process the touch interaction
+    if (isRecordingRef.current) {
+      setTimeout(() => {
+        if (isTouchingRef.current) {
+          processInteraction("Touch", 'TOUCH', touchIntensity);
+        }
+      }, 300);
+    }
+    
+    // Add data point to session if recording
+    if (isRecordingRef.current) {
+      setSessionData(prev => [...prev, {
+        timestamp: Date.now(),
+        capacitance: touchIntensity,
+        sentiment: 'Touch',
+        userMessage: 'Simulated touch'
+      }]);
+    }
+    
+    // End touch after duration
+    if (simulatedTouchTimeoutRef.current) {
+      clearTimeout(simulatedTouchTimeoutRef.current);
+    }
+    
+    simulatedTouchTimeoutRef.current = setTimeout(() => {
+      isTouchingRef.current = false;
+      setIsSimulatedTouching(false);
+      handleTouchEnd();
+      
+      // Gradually decrease value
+      const decreaseInterval = setInterval(() => {
+        if (valueRef.current > 0) {
+          valueRef.current = Math.max(0, valueRef.current - 2);
+          hardwareBufferRef.current.raw = valueRef.current;
+          hardwareBufferRef.current.interpolated = valueRef.current * 10;
+        } else {
+          clearInterval(decreaseInterval);
+        }
+      }, 50);
+      
+      setTimeout(() => clearInterval(decreaseInterval), 2000);
+    }, touchDuration);
+  };
 
   const handleSendMessage = () => {
     if (!inputText.trim()) return;
@@ -720,7 +809,7 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
       <div className="lg:col-span-1 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col overflow-hidden shadow-2xl h-[600px] lg:h-auto relative">
         
         {/* Mode Switch Header */}
-        <div className="p-4 border-b border-slate-800 bg-slate-950/50">
+        <div className="p-4 border-b border-slate-800 bg-slate-950/50 z-10">
            <div className="flex justify-between items-center mb-3">
               <h3 className="font-mono font-bold text-white flex items-center gap-2">
                 PLANT INTERFACE
@@ -776,7 +865,39 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 scroll-smooth">
+        <div 
+          className={`flex-1 overflow-y-auto p-4 space-y-4 scroll-smooth relative ${
+            !isConnected ? 'cursor-pointer select-none' : ''
+          } ${isSimulatedTouching ? 'bg-gradient-to-b from-pink-900/20 to-slate-900' : ''}`}
+          onClick={!isConnected ? handleSimulatedTouch : undefined}
+          onTouchStart={!isConnected ? handleSimulatedTouch : undefined}
+          title={!isConnected ? "Click or tap anywhere to simulate touching the plant" : ""}
+        >
+          {/* Visual feedback overlay when touching */}
+          {isSimulatedTouching && (
+            <div className="absolute inset-0 bg-pink-400/10 animate-pulse pointer-events-none z-0" />
+          )}
+          
+          {/* Touch hint when no device connected */}
+          {!isConnected && messages.length === 0 && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 opacity-90 pointer-events-none z-10">
+              <div className={`mb-4 transition-transform ${isSimulatedTouching ? 'scale-110' : 'scale-100'}`}>
+                <img 
+                  src="/assets/touch-plant.png" 
+                  alt="Touch Plant" 
+                  className={`w-48 h-48 object-contain ${isSimulatedTouching ? 'drop-shadow-[0_0_20px_rgba(255,192,203,0.6)]' : ''}`}
+                  onError={(e) => {
+                    // Fallback to icon if image doesn't load
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+              </div>
+              <p className="text-sm font-mono text-center mb-2 text-white flex items-center gap-2 justify-center">
+                {interactionMode === 'MUSIC' && <span className="text-2xl">🎵</span>}
+                Tap on me to see the demo data
+              </p>
+            </div>
+          )}
            {/* Mint Button if Data exists */}
            {sessionData.length > 0 && (
               <button 
@@ -788,7 +909,31 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
               </button>
            )}
            
-          {messages.length === 0 && (
+          {/* Visual feedback overlay when touching */}
+          {isSimulatedTouching && (
+            <div className="absolute inset-0 bg-pink-400/10 animate-pulse pointer-events-none z-0" />
+          )}
+          
+          {/* Touch hint when no device connected */}
+          {!isConnected && messages.length === 0 && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 opacity-60 pointer-events-none z-10">
+              <div className={`mb-4 transition-transform ${isSimulatedTouching ? 'scale-110' : 'scale-100'}`}>
+                {interactionMode === 'MUSIC' ? (
+                  <Music className={`w-16 h-16 ${isSimulatedTouching ? 'text-pink-400 animate-pulse' : 'text-slate-500'}`} />
+                ) : (
+                  <Leaf className={`w-16 h-16 ${isSimulatedTouching ? 'text-pink-400 animate-pulse' : 'text-slate-500'}`} />
+                )}
+              </div>
+              <p className="text-sm font-mono text-center mb-2">
+                {interactionMode === 'MUSIC' ? "Click to play music" : "Click to chat with the plant"}
+              </p>
+              <p className="text-xs font-mono text-slate-600">
+                (Simulated touch - no device needed)
+              </p>
+            </div>
+          )}
+          
+          {messages.length === 0 && isConnected && (
             <div className="h-full flex flex-col items-center justify-center text-slate-600 opacity-50">
               {interactionMode === 'MUSIC' ? <Music className="w-12 h-12 mb-2 animate-pulse" /> : <Leaf className="w-12 h-12 mb-2" />}
               <p className="text-sm font-mono text-center">
@@ -797,7 +942,7 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
             </div>
           )}
           {messages.map((msg, idx) => (
-            <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} relative z-10`}>
               <div className={`max-w-[85%] p-3 rounded-2xl text-sm leading-relaxed ${
                 msg.role === 'user' 
                   ? 'bg-slate-700 border border-slate-600 text-white rounded-tr-none' 

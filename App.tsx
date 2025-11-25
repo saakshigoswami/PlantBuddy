@@ -51,7 +51,7 @@ const App: React.FC = () => {
   // API Key Settings
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   // Default to the provided key initially
-  const [geminiKey, setGeminiKey] = useState('AIzaSyBC5wpd9XG6luOHGCBL4T1F-F3FeoRDAOE');
+  const [geminiKey, setGeminiKey] = useState('AIzaSyCvCwLoFMwCzy8agJT9N8R9xdnew7vbcZU');
   const [hasKey, setHasKey] = useState(true);
 
   useEffect(() => {
@@ -108,7 +108,7 @@ const App: React.FC = () => {
     } else {
        // Allow clearing key
        localStorage.removeItem('GEMINI_API_KEY');
-       setGeminiKey('AIzaSyBC5wpd9XG6luOHGCBL4T1F-F3FeoRDAOE');
+       setGeminiKey('AIzaSyCvCwLoFMwCzy8agJT9N8R9xdnew7vbcZU');
     }
   };
 

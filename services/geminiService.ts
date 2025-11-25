@@ -1,7 +1,8 @@
 
-import { GoogleGenAI } from "@google/genai";
+// Use the official Google Generative AI SDK
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const HARDCODED_KEY = 'AIzaSyBC5wpd9XG6luOHGCBL4T1F-F3FeoRDAOE';
+const HARDCODED_KEY = 'AIzaSyCvCwLoFMwCzy8agJT9N8R9xdnew7vbcZU';
 
 // Helper to get the best available API Key
 const getApiKey = (): string | undefined => {
@@ -58,53 +59,104 @@ export const generatePlantResponse = async (
         return "(System: API Key missing. Please click the Lock icon in the top-right to enter your Google Gemini API Key.)";
       }
 
-      const ai = new GoogleGenAI({ apiKey });
-      // Use correct model name - gemini-1.5-flash is the current stable model
-      const modelId = 'gemini-1.5-flash'; 
-    
-    // Contextualize the physical sensation
-    let physicalContext = "";
-    if (touchIntensity > 80) physicalContext = "(System Note: User is holding you tightly/firmly) ";
-    else if (touchIntensity > 30) physicalContext = "(System Note: User is touching you gently) ";
-
-    const prompt = `${physicalContext} ${userMessage}`;
-
-    const contents = [];
-    
-    // Process history to ensure valid alternating turns
-    for (const msg of history) {
-      const role = msg.role === 'user' ? 'user' : 'model';
+      // Log API key (first 10 chars only for security)
+      console.log("Using API Key:", apiKey.substring(0, 10) + "...");
       
-      // If the last message in contents has the same role, merge them
-      if (contents.length > 0 && contents[contents.length - 1].role === role) {
-        contents[contents.length - 1].parts[0].text += `\n${msg.text}`;
+      const genAI = new GoogleGenerativeAI(apiKey);
+      
+      // Contextualize the physical sensation
+      let physicalContext = "";
+      if (touchIntensity > 80) physicalContext = "(System Note: User is holding you tightly/firmly) ";
+      else if (touchIntensity > 30) physicalContext = "(System Note: User is touching you gently) ";
+
+      const prompt = `${physicalContext} ${userMessage}`;
+
+      const contents = [];
+      
+      // Process history to ensure valid alternating turns
+      for (const msg of history) {
+        const role = msg.role === 'user' ? 'user' : 'model';
+        
+        // If the last message in contents has the same role, merge them
+        if (contents.length > 0 && contents[contents.length - 1].role === role) {
+          contents[contents.length - 1].parts[0].text += `\n${msg.text}`;
+        } else {
+          contents.push({
+            role: role,
+            parts: [{ text: msg.text }]
+          });
+        }
+      }
+
+      // Append current user message
+      // If the history ended with 'user', merge this prompt into that last turn
+      if (contents.length > 0 && contents[contents.length - 1].role === 'user') {
+         contents[contents.length - 1].parts[0].text += `\n${prompt}`;
       } else {
-        contents.push({
-          role: role,
-          parts: [{ text: msg.text }]
+         contents.push({ role: 'user', parts: [{ text: prompt }] });
+      }
+
+      // Build the full prompt with system instruction and history
+      let fullPrompt = PLANT_SYSTEM_INSTRUCTION + "\n\n";
+      
+      // Add conversation history
+      for (const msg of contents.slice(0, -1)) {
+        const role = msg.role === 'user' ? 'User' : 'PlantBuddy';
+        fullPrompt += `${role}: ${msg.parts[0].text}\n\n`;
+      }
+      
+      // Add current message
+      fullPrompt += `User: ${contents[contents.length - 1].parts[0].text}\n\nPlantBuddy:`;
+      
+      // Try using REST API directly as fallback if SDK fails
+      // First try the SDK with the simplest model
+      try {
+        const model = genAI.getGenerativeModel({ 
+          model: 'gemini-1.5-flash',
         });
-      }
-    }
-
-    // Append current user message
-    // If the history ended with 'user', merge this prompt into that last turn
-    if (contents.length > 0 && contents[contents.length - 1].role === 'user') {
-       contents[contents.length - 1].parts[0].text += `\n${prompt}`;
-    } else {
-       contents.push({ role: 'user', parts: [{ text: prompt }] });
-    }
-
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: contents,
-      config: {
-        systemInstruction: PLANT_SYSTEM_INSTRUCTION,
-        temperature: 0.7,
-      }
-    });
-
-      if (response.text) {
-        return response.text;
+        
+        const result = await model.generateContent(fullPrompt);
+        const response = await result.response;
+        const text = response.text();
+        if (text) {
+          console.log("Success with gemini-1.5-flash via SDK");
+          return text;
+        }
+      } catch (sdkError: any) {
+        console.log("SDK failed, trying REST API directly...", sdkError.message);
+        
+        // Fallback to REST API
+        try {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              contents: [{
+                parts: [{ text: fullPrompt }]
+              }],
+              generationConfig: {
+                temperature: 0.7,
+              }
+            })
+          });
+          
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(`API Error ${response.status}: ${JSON.stringify(errorData)}`);
+          }
+          
+          const data = await response.json();
+          const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (text) {
+            console.log("Success with REST API");
+            return text;
+          }
+        } catch (restError: any) {
+          console.error("REST API also failed:", restError);
+          throw restError;
+        }
       }
       
       return "I'm listening...";
@@ -134,27 +186,55 @@ export const generatePlantResponse = async (
   // Handle final error after retries
   console.error("Gemini Plant Error:", lastError);
   
-  // Handle specific error types
+  // Handle specific error types - be more precise
   const errorMessage = lastError?.message || lastError?.toString() || String(lastError || 'Unknown error');
   const errorStr = errorMessage.toLowerCase();
   
+  // Log the full error for debugging
+  console.error("Full error details:", {
+    message: errorMessage,
+    code: lastError?.code,
+    status: lastError?.status,
+    response: lastError?.response,
+    cause: lastError?.cause,
+    error: lastError
+  });
+  
   // API Key errors
-  if (errorStr.includes("api key") || errorStr.includes("invalid") || errorStr.includes("401") || errorStr.includes("403")) {
+  if (errorStr.includes("api key") || errorStr.includes("invalid") || errorStr.includes("401") || errorStr.includes("403") || errorStr.includes("unauthorized")) {
     return "(System: Invalid or missing API Key. Please click the Lock icon in the top-right to enter your Google Gemini API Key.)";
   }
   
   // Rate limit / Quota errors
-  if (errorStr.includes("quota") || errorStr.includes("rate limit") || errorStr.includes("429")) {
+  if (errorStr.includes("quota") || errorStr.includes("rate limit") || errorStr.includes("429") || errorStr.includes("resource exhausted")) {
     return "(System: API quota exceeded. Please try again later or check your Gemini API quota.)";
   }
   
-  // Network errors
-  if (errorStr.includes("network") || errorStr.includes("fetch") || errorStr.includes("timeout")) {
+  // Model not found errors
+  if (errorStr.includes("not found") || errorStr.includes("404") || errorStr.includes("model")) {
+    return `(System: Model error - ${errorMessage.slice(0, 80)}. Please check your API key and model access.)`;
+  }
+  
+  // Fetch/HTTP errors - check for specific status codes
+  if (errorStr.includes("fetch") || errorStr.includes("http") || lastError?.status) {
+    const status = lastError?.status || 'unknown';
+    if (status === 401 || status === 403) {
+      return "(System: API Key is invalid or expired. Please get a new API key from https://aistudio.google.com/apikey)";
+    }
+    if (status === 429) {
+      return "(System: Rate limit exceeded. Please wait a moment and try again.)";
+    }
+    return `(System: API Error (${status}) - ${errorMessage.slice(0, 100)}. Please check your API key at https://aistudio.google.com/apikey)`;
+  }
+  
+  // Network errors - only if it's actually a network issue
+  if ((errorStr.includes("network") || errorStr.includes("fetch failed") || errorStr.includes("timeout")) && 
+      !errorStr.includes("api") && !errorStr.includes("model") && !errorStr.includes("key")) {
     return "(System: Network error. Please check your internet connection and try again.)";
   }
   
-  // Return a user-friendly error message
-  return `(System: ${errorMessage.slice(0, 100)})`;
+  // Return the actual error message so user can see what's wrong
+  return `(System: ${errorMessage.slice(0, 120)})`;
 };
 
 export const analyzeDatasetValue = async (
@@ -164,7 +244,7 @@ export const analyzeDatasetValue = async (
     const apiKey = getApiKey();
     if (!apiKey) throw new Error("Missing API Key");
 
-    const ai = new GoogleGenAI({ apiKey });
+    const genAI = new GoogleGenerativeAI(apiKey);
 
     const prompt = `
       Analyze this raw plant-interaction dataset and package it for the Data Economy Marketplace.
@@ -180,15 +260,17 @@ export const analyzeDatasetValue = async (
       }
     `;
 
-    const response = await ai.models.generateContent({
+    // Use the official SDK for analysis
+    const model = genAI.getGenerativeModel({ 
       model: 'gemini-1.5-flash',
-      contents: prompt,
-      config: {
+      generationConfig: {
         responseMimeType: 'application/json',
       }
     });
-
-    const text = response.text;
+    
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
     if (!text) throw new Error("No analysis generated");
     
     return JSON.parse(text);
