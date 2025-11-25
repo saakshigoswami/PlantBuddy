@@ -164,15 +164,23 @@ const App: React.FC = () => {
       if (!result.blobId) throw new Error("Failed to get Blob ID from Walrus");
 
       // 4. ON-CHAIN CERTIFICATION
-      if (result.certificate) {
-        setUploadStep('CERTIFYING');
-        try {
-          await certifyBlobOnChain(result.blobId, result.certificate, adapter);
-          console.log("Blob certified on Sui!");
-        } catch (certErr) {
-          console.warn("Certification warning:", certErr);
-          // We continue even if certification fails, as the blob is uploaded
-        }
+      setUploadStep('CERTIFYING');
+      try {
+        await certifyBlobOnChain(
+          result.blobId,
+          {
+            title: analysis.title,
+            description: analysis.description,
+            dataPoints: currentSessionData.length,
+            sizeBytes: fullScript.length
+          },
+          adapter,
+          selectedNetwork
+        );
+        console.log("Blob certified on Sui!");
+      } catch (certErr) {
+        console.warn("Certification warning:", certErr);
+        // We continue even if certification fails, as the blob is uploaded
       }
 
       // 5. Create Blob Object (Metadata wrapper for Marketplace)
@@ -239,9 +247,23 @@ const App: React.FC = () => {
               onClick={() => setView(ViewMode.HOME)}
               className="flex items-center gap-3 hover:opacity-80 transition-opacity"
             >
-              <div className="bg-brand-pink rounded-lg p-1.5">
-                <Flower className="h-6 w-6 text-brand-blue" />
-              </div>
+              <img 
+                src="/assets/logo.png" 
+                alt="PlantBuddy Logo" 
+                className="h-8 w-8 object-contain"
+                onError={(e) => {
+                  // Fallback to flower icon if logo doesn't exist
+                  const target = e.target as HTMLImageElement;
+                  target.style.display = 'none';
+                  const parent = target.parentElement;
+                  if (parent && !parent.querySelector('.logo-fallback')) {
+                    const fallback = document.createElement('div');
+                    fallback.className = 'logo-fallback bg-brand-pink rounded-lg p-1.5';
+                    fallback.innerHTML = '<svg class="h-6 w-6 text-brand-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>';
+                    parent.insertBefore(fallback, target);
+                  }
+                }}
+              />
               <span className="text-xl font-mono font-bold tracking-tight text-white hidden sm:block">
                 Plant<span className="text-brand-pink">Buddy</span>
               </span>

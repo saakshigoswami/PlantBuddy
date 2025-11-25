@@ -91,13 +91,97 @@ export async function uploadSessionViaWalrusSDK(
   throw new Error("Walrus upload failed");
 }
 
+// PlantBuddy Oracle Package ID - UPDATE THIS AFTER DEPLOYMENT
+// Get this from: sui client publish output
+const PLANTBUDDY_PACKAGE_ID = import.meta.env.VITE_PLANTBUDDY_PACKAGE_ID || "";
+
 /**
- * Certify blob on-chain using Walrus Move package
- * Note: This requires the exact Move Package ID for the current deployment.
- * If certification fails due to package mismatch, the blob is still safely stored!
+ * Certify blob on-chain using PlantBuddy Move contract
+ * This creates an on-chain record linking the Walrus blob to the creator
+ * 
+ * @param blobId - Walrus blob ID
+ * @param metadata - Blob metadata (title, description, dataPoints, size)
+ * @param walletAdapter - Wallet adapter with signAndExecuteTransactionBlock
+ * @param network - Network where blob is stored
  */
-export async function certifyBlobOnChain(blobId: string, certificate: any, walletAdapter: any) {
-  console.log("Skipping on-chain certification for this demo (requires exact epoch package ID).");
-  console.log("Blob is already stored on Walrus with ID:", blobId);
-  return { status: "Stored", blobId };
+export async function certifyBlobOnChain(
+  blobId: string, 
+  metadata: {
+    title: string;
+    description: string;
+    dataPoints: number;
+    sizeBytes: number;
+  },
+  walletAdapter: any,
+  network: WalrusNetwork = 'TESTNET'
+): Promise<{ status: string; blobId: string; txDigest?: string }> {
+  
+  // If package ID not set, skip certification but still return success
+  if (!PLANTBUDDY_PACKAGE_ID) {
+    console.warn("⚠️ PlantBuddy Package ID not configured. Skipping on-chain certification.");
+    console.warn("   Set VITE_PLANTBUDDY_PACKAGE_ID in your .env file after deploying the contract.");
+    console.log("✅ Blob is already stored on Walrus with ID:", blobId);
+    return { status: "Stored (not certified)", blobId };
+  }
+
+  if (!walletAdapter || !walletAdapter.signAndExecuteTransactionBlock) {
+    console.warn("⚠️ Wallet adapter not available. Skipping on-chain certification.");
+    return { status: "Stored (not certified)", blobId };
+  }
+
+  try {
+    console.log("🔐 Certifying blob on-chain...");
+    console.log("   Package ID:", PLANTBUDDY_PACKAGE_ID);
+    console.log("   Blob ID:", blobId);
+
+    // Import Sui Transaction Builder
+    const { TransactionBlock } = await import('@mysten/sui.js/transactions');
+    const txb = new TransactionBlock();
+
+    // Build the certify_blob transaction
+    // Note: You'll need to pass the registry object ID after initializing
+    const REGISTRY_ID = import.meta.env.VITE_PLANTBUDDY_REGISTRY_ID || "";
+
+    if (!REGISTRY_ID) {
+      console.warn("⚠️ Registry ID not configured. Skipping certification.");
+      console.warn("   Initialize the registry first, then set VITE_PLANTBUDDY_REGISTRY_ID");
+      return { status: "Stored (not certified)", blobId };
+    }
+
+    txb.moveCall({
+      target: `${PLANTBUDDY_PACKAGE_ID}::plantbuddy_blob::certify_blob`,
+      arguments: [
+        txb.object(REGISTRY_ID), // Registry object
+        txb.pure(blobId), // walrus_blob_id
+        txb.pure(metadata.title), // title
+        txb.pure(metadata.description), // description
+        txb.pure(metadata.dataPoints), // data_points
+        txb.pure(metadata.sizeBytes), // size_bytes
+        txb.pure(network), // network
+      ],
+    });
+
+    // Execute transaction
+    const result = await walletAdapter.signAndExecuteTransactionBlock({
+      transactionBlock: txb,
+    });
+
+    console.log("✅ Blob certified on-chain!");
+    console.log("   Transaction:", result.digest);
+
+    return { 
+      status: "Certified", 
+      blobId,
+      txDigest: result.digest
+    };
+
+  } catch (error: any) {
+    console.error("❌ On-chain certification failed:", error);
+    // Don't throw - blob is still stored on Walrus
+    return { 
+      status: "Stored (certification failed)", 
+      blobId,
+      error: error.message 
+    };
+  }
 }
