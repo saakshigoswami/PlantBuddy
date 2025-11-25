@@ -721,7 +721,7 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession, onSessionD
                     Welcome to PlantBuddy Demo
                   </h3>
                   <p className="text-xs font-mono text-slate-200 leading-relaxed">
-                    PlantBuddy IOT device not connected to your system currently. Please select music mode to listen demo sound and tap on plant, keep the threshold at 47 for better experience
+                    PlantBuddy IOT device not connected to your system currently. Please select music mode to listen demo sound and tap on plant or select talk mode to have a demo conversation with plant, keep the threshold at 47 for better experience
                   </p>
                 </div>
               </div>
