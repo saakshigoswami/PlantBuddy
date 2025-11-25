@@ -13,7 +13,7 @@ const NewDemoVideo: React.FC = () => {
           </p>
         </div>
         
-        <div className="relative w-full aspect-video rounded-2xl overflow-hidden shadow-2xl animate-scale-in">
+        <div className="relative w-full aspect-video rounded-2xl overflow-hidden shadow-2xl animate-scale-in hover:scale-105 transition-transform duration-500 hover:shadow-[0_0_40px_rgba(255,107,157,0.3)]">
           <iframe
             className="absolute inset-0 w-full h-full"
             src="https://www.youtube.com/embed/czKneFSUZII"

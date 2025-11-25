@@ -32,7 +32,7 @@ const NewHero: React.FC<NewHeroProps> = ({ onStart }) => {
             <img 
               src="/assets/plant-buddy-tech.png" 
               alt="PlantBuddy IoT device - cute kawaii plant pot" 
-              className="w-full max-w-xs rounded-2xl shadow-2xl"
+              className="w-full max-w-xs rounded-2xl shadow-2xl animate-float hover:scale-105 transition-transform duration-300"
               onError={(e) => {
                 (e.target as HTMLImageElement).style.display = 'none';
               }}
@@ -52,9 +52,9 @@ const NewHero: React.FC<NewHeroProps> = ({ onStart }) => {
             </p>
             <button
               onClick={onStart}
-              className="bg-[#ff6b9d] hover:bg-[#ff6b9d]/90 text-white shadow-2xl text-base px-8 py-6 rounded-full transition-all duration-300 hover:scale-105 hover:shadow-xl flex items-center gap-2 mx-auto"
+              className="bg-[#ff6b9d] hover:bg-[#ff6b9d]/90 text-white shadow-2xl text-base px-8 py-6 rounded-full transition-all duration-300 hover:scale-110 hover:shadow-xl flex items-center gap-2 mx-auto animate-pulse-glow"
             >
-              <Music className="w-5 h-5" />
+              <Music className="w-5 h-5 animate-gentle-bounce" />
               Connect With Your PlantBuddy
             </button>
           </div>
@@ -64,7 +64,8 @@ const NewHero: React.FC<NewHeroProps> = ({ onStart }) => {
             <img 
               src="/assets/hero-plant.jpg" 
               alt="Person interacting with PlantBuddy" 
-              className="w-full max-w-xs rounded-2xl shadow-2xl"
+              className="w-full max-w-xs rounded-2xl shadow-2xl animate-float hover:scale-105 transition-transform duration-300"
+              style={{ animationDelay: '0.5s' }}
               onError={(e) => {
                 (e.target as HTMLImageElement).style.display = 'none';
               }}

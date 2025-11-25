@@ -79,6 +79,42 @@
         }
       }
       
+      @keyframes float {
+        0%, 100% {
+          transform: translateY(0px);
+        }
+        50% {
+          transform: translateY(-10px);
+        }
+      }
+      
+      @keyframes pulse-glow {
+        0%, 100% {
+          box-shadow: 0 0 20px rgba(255, 107, 157, 0.3);
+        }
+        50% {
+          box-shadow: 0 0 30px rgba(255, 107, 157, 0.6);
+        }
+      }
+      
+      @keyframes gentle-bounce {
+        0%, 100% {
+          transform: translateY(0) scale(1);
+        }
+        50% {
+          transform: translateY(-5px) scale(1.02);
+        }
+      }
+      
+      @keyframes shimmer {
+        0% {
+          background-position: -1000px 0;
+        }
+        100% {
+          background-position: 1000px 0;
+        }
+      }
+      
       .animate-fade-in-up {
         animation: fade-in-up 0.6s ease-out;
       }
@@ -89,6 +125,24 @@
       
       .animate-scale-in {
         animation: scale-in 0.4s ease-out;
+      }
+      
+      .animate-float {
+        animation: float 3s ease-in-out infinite;
+      }
+      
+      .animate-pulse-glow {
+        animation: pulse-glow 2s ease-in-out infinite;
+      }
+      
+      .animate-gentle-bounce {
+        animation: gentle-bounce 2s ease-in-out infinite;
+      }
+      
+      .animate-shimmer {
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+        background-size: 1000px 100%;
+        animation: shimmer 3s infinite;
       }
     </style>
   <script type="importmap">

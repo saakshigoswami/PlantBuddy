@@ -906,19 +906,24 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession, onSessionD
           )}
           
           {/* Touch hint when no device connected - Only show in MUSIC mode */}
-          {!isConnected && interactionMode === 'MUSIC' && messages.length === 0 && (
+          {!isConnected && interactionMode === 'MUSIC' && (
             <div className="absolute top-4 left-0 right-0 flex flex-col items-center text-slate-500 opacity-90 pointer-events-none z-10 px-4">
               <div className="flex flex-col items-center gap-3">
                 {/* Plant and Music Emoji Row */}
                 <div className="flex items-center gap-0">
                   <div className={`transition-transform ${isSimulatedTouching ? 'scale-110' : 'scale-100'}`}>
                     <img 
+                      key={`plant-${interactionMode}`}
                       src="/assets/touch-plant.png" 
                       alt="Touch Plant" 
                       className={`w-48 h-48 object-contain ${isSimulatedTouching ? 'drop-shadow-[0_0_20px_rgba(255,192,203,0.6)]' : ''}`}
                       onError={(e) => {
                         // Fallback to icon if image doesn't load
                         (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                      onLoad={() => {
+                        // Ensure image is visible when loaded
+                        console.log('Plant image loaded successfully');
                       }}
                     />
                   </div>

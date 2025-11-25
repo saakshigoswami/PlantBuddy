@@ -36,7 +36,7 @@ const NewWhyWalrus: React.FC = () => {
           {/* Traditional Cloud */}
           <div className="p-8 bg-slate-900/50 border border-slate-700/50 rounded-xl animate-fade-in-up" style={{ animationDelay: "0.1s" }}>
             <div className="flex items-center gap-3 mb-6">
-              <Cloud className="w-8 h-8 text-red-400/70" />
+              <Cloud className="w-8 h-8 text-red-400/70 hover:animate-gentle-bounce transition-all duration-300" />
               <h3 className="text-2xl font-bold text-white">Traditional Cloud</h3>
             </div>
             <ul className="space-y-3">
@@ -52,7 +52,7 @@ const NewWhyWalrus: React.FC = () => {
           {/* Walrus + PlantBuddy */}
           <div className="p-8 bg-gradient-to-br from-brand-green/10 to-brand-pink/10 border border-brand-green/30 rounded-xl shadow-lg animate-fade-in-up" style={{ animationDelay: "0.2s" }}>
             <div className="flex items-center gap-3 mb-6">
-              <Lock className="w-8 h-8 text-brand-green" />
+              <Lock className="w-8 h-8 text-brand-green hover:animate-gentle-bounce transition-all duration-300" />
               <h3 className="text-2xl font-bold text-white">Walrus + PlantBuddy</h3>
             </div>
             <ul className="space-y-3">
@@ -78,9 +78,9 @@ const NewWhyWalrus: React.FC = () => {
               return (
                 <div 
                   key={index} 
-                  className="flex items-center gap-2 px-4 py-2 bg-slate-800/80 rounded-full border border-slate-700/50"
+                  className="flex items-center gap-2 px-4 py-2 bg-slate-800/80 rounded-full border border-slate-700/50 hover:scale-110 hover:shadow-lg transition-all duration-300"
                 >
-                  <Icon className={`w-5 h-5 ${feature.color}`} />
+                  <Icon className={`w-5 h-5 ${feature.color} hover:animate-gentle-bounce`} />
                   <span className="font-medium text-white">{feature.label}</span>
                 </div>
               );

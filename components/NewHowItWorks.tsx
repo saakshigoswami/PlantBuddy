@@ -54,7 +54,7 @@ const NewHowItWorks: React.FC = () => {
                     <img 
                       src={step.image} 
                       alt={step.title} 
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                       onError={(e) => {
                         (e.target as HTMLImageElement).style.display = 'none';
                       }}
@@ -67,8 +67,8 @@ const NewHowItWorks: React.FC = () => {
 
                 {/* Content */}
                 <div className="relative p-8 flex flex-col items-center text-center h-full">
-                  <div className="flex items-center justify-center w-16 h-16 rounded-full bg-brand-green/10 mb-6 group-hover:bg-brand-green/20 transition-colors duration-300">
-                    <Icon className="w-8 h-8 text-brand-green" />
+                  <div className="flex items-center justify-center w-16 h-16 rounded-full bg-brand-green/10 mb-6 group-hover:bg-brand-green/20 transition-colors duration-300 group-hover:scale-110 transition-transform duration-300">
+                    <Icon className="w-8 h-8 text-brand-green group-hover:animate-gentle-bounce" />
                   </div>
                   <h3 className="text-xl font-bold mb-3 text-white">{step.title}</h3>
                   <p className="text-slate-300 leading-relaxed">{step.description}</p>
