@@ -899,8 +899,8 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
           
           {/* Touch hint when no device connected */}
           {!isConnected && messages.length === 0 && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 opacity-90 pointer-events-none z-10 px-4">
-              <div className="flex flex-col items-center gap-6 mb-6">
+            <div className="absolute top-4 left-0 right-0 flex flex-col items-center text-slate-500 opacity-90 pointer-events-none z-10 px-4">
+              <div className="flex flex-col items-center gap-3">
                 {/* Plant and Music Emoji Row */}
                 <div className="flex items-center gap-0">
                   <div className={`transition-transform ${isSimulatedTouching ? 'scale-110' : 'scale-100'}`}>
