@@ -7,14 +7,15 @@ const HARDCODED_KEY = 'AIzaSyBC5wpd9XG6luOHGCBL4T1F-F3FeoRDAOE';
 const getApiKey = (): string | undefined => {
   // 1. Check Local Storage (User override)
   const localKey = localStorage.getItem('GEMINI_API_KEY');
-  if (localKey && localKey.trim().length > 0) return localKey;
+  if (localKey && localKey.trim().length > 0) return localKey.trim();
   
-  // 2. Check Environment Variable (Preview environment)
-  if (process.env.API_KEY && process.env.API_KEY !== 'undefined') {
-    return process.env.API_KEY;
+  // 2. Check Environment Variable (Vite uses import.meta.env)
+  const envKey = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY;
+  if (envKey && envKey !== 'undefined' && envKey.trim().length > 0) {
+    return envKey.trim();
   }
   
-  // 3. Fallback to provided key
+  // 3. Fallback to provided key (for development only)
   return HARDCODED_KEY;
 };
 
@@ -47,14 +48,19 @@ export const generatePlantResponse = async (
   touchIntensity: number,
   history: {role: string, text: string}[]
 ): Promise<string> => {
-  try {
-    const apiKey = getApiKey();
-    if (!apiKey) {
-      return "(System: API Key missing. Please click the Lock icon in the top-right to enter your Google Gemini API Key.)";
-    }
+  const MAX_RETRIES = 2;
+  let lastError: any = null;
+  
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const apiKey = getApiKey();
+      if (!apiKey) {
+        return "(System: API Key missing. Please click the Lock icon in the top-right to enter your Google Gemini API Key.)";
+      }
 
-    const ai = new GoogleGenAI({ apiKey });
-    const modelId = 'gemini-2.5-flash'; 
+      const ai = new GoogleGenAI({ apiKey });
+      // Use correct model name - gemini-1.5-flash is the current stable model
+      const modelId = 'gemini-1.5-flash'; 
     
     // Contextualize the physical sensation
     let physicalContext = "";
@@ -97,22 +103,58 @@ export const generatePlantResponse = async (
       }
     });
 
-    if (response.text) {
-      return response.text;
+      if (response.text) {
+        return response.text;
+      }
+      
+      return "I'm listening...";
+    } catch (error: any) {
+      lastError = error;
+      
+      // Don't retry on API key errors
+      const errorMessage = error?.message || error?.toString() || String(error);
+      const errorStr = errorMessage.toLowerCase();
+      
+      if (errorStr.includes("api key") || errorStr.includes("invalid") || errorStr.includes("401") || errorStr.includes("403")) {
+        break; // Don't retry
+      }
+      
+      // Retry on rate limits or network errors
+      if (attempt < MAX_RETRIES && (errorStr.includes("rate limit") || errorStr.includes("429") || errorStr.includes("network") || errorStr.includes("timeout"))) {
+        console.log(`Retrying Gemini API call (attempt ${attempt + 1}/${MAX_RETRIES + 1})...`);
+        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1))); // Exponential backoff
+        continue;
+      }
+      
+      // If not retrying, break and handle error
+      break;
     }
-    
-    return "I'm listening...";
-  } catch (error: any) {
-    console.error("Gemini Plant Error:", error);
-    
-    // Specific handling for API Key errors (400 Invalid Argument)
-    if (error.toString().includes("400") || error.message?.includes("API key")) {
-         return "(System: Invalid API Key. Please click the Lock icon in the top-right to check your key settings.)";
-    }
-
-    // Return the actual error message to help debugging
-    return `(System Voice: Connection error. ${error.message || 'Unknown'})`;
   }
+  
+  // Handle final error after retries
+  console.error("Gemini Plant Error:", lastError);
+  
+  // Handle specific error types
+  const errorMessage = lastError?.message || lastError?.toString() || String(lastError || 'Unknown error');
+  const errorStr = errorMessage.toLowerCase();
+  
+  // API Key errors
+  if (errorStr.includes("api key") || errorStr.includes("invalid") || errorStr.includes("401") || errorStr.includes("403")) {
+    return "(System: Invalid or missing API Key. Please click the Lock icon in the top-right to enter your Google Gemini API Key.)";
+  }
+  
+  // Rate limit / Quota errors
+  if (errorStr.includes("quota") || errorStr.includes("rate limit") || errorStr.includes("429")) {
+    return "(System: API quota exceeded. Please try again later or check your Gemini API quota.)";
+  }
+  
+  // Network errors
+  if (errorStr.includes("network") || errorStr.includes("fetch") || errorStr.includes("timeout")) {
+    return "(System: Network error. Please check your internet connection and try again.)";
+  }
+  
+  // Return a user-friendly error message
+  return `(System: ${errorMessage.slice(0, 100)})`;
 };
 
 export const analyzeDatasetValue = async (
@@ -139,7 +181,7 @@ export const analyzeDatasetValue = async (
     `;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-1.5-flash',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',

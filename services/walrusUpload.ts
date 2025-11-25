@@ -95,6 +95,16 @@ export async function uploadSessionViaWalrusSDK(
 // Get this from: sui client publish output
 const PLANTBUDDY_PACKAGE_ID = import.meta.env.VITE_PLANTBUDDY_PACKAGE_ID || "";
 
+// Debug: Log environment variables on module load
+if (typeof window !== 'undefined') {
+  console.log("🔍 Environment Check:", {
+    hasPackageId: !!PLANTBUDDY_PACKAGE_ID,
+    packageId: PLANTBUDDY_PACKAGE_ID ? `${PLANTBUDDY_PACKAGE_ID.slice(0, 10)}...` : "NOT SET",
+    hasRegistryId: !!import.meta.env.VITE_PLANTBUDDY_REGISTRY_ID,
+    allEnvVars: Object.keys(import.meta.env).filter(k => k.startsWith('VITE_'))
+  });
+}
+
 /**
  * Certify blob on-chain using PlantBuddy Move contract
  * This creates an on-chain record linking the Walrus blob to the creator
@@ -113,7 +123,8 @@ export async function certifyBlobOnChain(
     sizeBytes: number;
   },
   walletAdapter: any,
-  network: WalrusNetwork = 'TESTNET'
+  network: WalrusNetwork = 'TESTNET',
+  senderAddress?: string
 ): Promise<{ status: string; blobId: string; txDigest?: string }> {
   
   // If package ID not set, skip certification but still return success
@@ -133,13 +144,16 @@ export async function certifyBlobOnChain(
     console.log("🔐 Certifying blob on-chain...");
     console.log("   Package ID:", PLANTBUDDY_PACKAGE_ID);
     console.log("   Blob ID:", blobId);
+    console.log("   Wallet adapter:", walletAdapter);
 
     // Import Sui Transaction Builder
+    // @mysten/sui.js 0.54.1 only has TransactionBlock
     const { TransactionBlock } = await import('@mysten/sui.js/transactions');
-    const txb = new TransactionBlock();
+    const tx = new TransactionBlock();
+    
+    console.log("   Using TransactionBlock API");
 
     // Build the certify_blob transaction
-    // Note: You'll need to pass the registry object ID after initializing
     const REGISTRY_ID = import.meta.env.VITE_PLANTBUDDY_REGISTRY_ID || "";
 
     if (!REGISTRY_ID) {
@@ -148,21 +162,26 @@ export async function certifyBlobOnChain(
       return { status: "Stored (not certified)", blobId };
     }
 
-    txb.moveCall({
+    tx.moveCall({
       target: `${PLANTBUDDY_PACKAGE_ID}::plantbuddy_blob::certify_blob`,
       arguments: [
-        txb.object(REGISTRY_ID), // Registry object
-        txb.pure.string(blobId), // walrus_blob_id
-        txb.pure.string(metadata.title), // title
-        txb.pure.string(metadata.description), // description
-        txb.pure.u64(metadata.dataPoints), // data_points
-        txb.pure.u64(metadata.sizeBytes), // size_bytes
+        tx.object(REGISTRY_ID), // Registry object
+        tx.pure.string(blobId), // walrus_blob_id
+        tx.pure.string(metadata.title), // title
+        tx.pure.string(metadata.description), // description
+        tx.pure.u64(metadata.dataPoints), // data_points
+        tx.pure.u64(metadata.sizeBytes), // size_bytes
       ],
     });
 
     // Execute transaction
+    // Pass transactionBlock to the adapter
+    console.log("   Executing transaction...");
+    console.log("   TransactionBlock type:", tx.constructor.name);
+    
+    // The adapter will handle extracting transactionBlock from params
     const result = await walletAdapter.signAndExecuteTransactionBlock({
-      transactionBlock: txb,
+      transactionBlock: tx,
     });
 
     console.log("✅ Blob certified on-chain!");
@@ -176,11 +195,25 @@ export async function certifyBlobOnChain(
 
   } catch (error: any) {
     console.error("❌ On-chain certification failed:", error);
+    
+    // Check for specific error types - handle both string messages and error objects
+    const errorMessage = error?.message || error?.data?.message || String(error || '');
+    const errorString = errorMessage.toLowerCase();
+    
+    if (errorString.includes('gas') || errorString.includes('no valid gas coins') || errorString.includes('insufficient')) {
+      console.warn("⚠️ Insufficient SUI for gas fees. Please add more SUI to your wallet.");
+      return { 
+        status: "Stored (insufficient gas)", 
+        blobId,
+        error: "Insufficient SUI for transaction fees. Please add more SUI to your wallet."
+      };
+    }
+    
     // Don't throw - blob is still stored on Walrus
     return { 
       status: "Stored (certification failed)", 
       blobId,
-      error: error.message 
+      error: errorMessage || "Unknown error"
     };
   }
 }

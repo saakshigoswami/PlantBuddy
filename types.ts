@@ -15,7 +15,9 @@ export interface PlantDataPoint {
 }
 
 export interface DataBlob {
-  id: string; // Walrus Blob ID simulation
+  id: string; // Transaction Digest (verifiable on-chain ID) or Walrus Blob ID
+  walrusBlobId?: string; // Original Walrus storage ID (optional)
+  txDigest?: string; // Sui transaction digest for on-chain certification
   name: string;
   description: string;
   size: string;

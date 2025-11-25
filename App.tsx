@@ -5,7 +5,8 @@ import {
   useCurrentAccount, 
   useDisconnectWallet, 
   useSignAndExecuteTransaction, 
-  useWallets 
+  useWallets,
+  useSuiClient
 } from '@mysten/dapp-kit';
 import type { WalletWithRequiredFeatures } from '@mysten/wallet-standard';
 import { ViewMode, PlantDataPoint, MOCK_BLOBS, DataBlob } from './types';
@@ -120,11 +121,38 @@ const App: React.FC = () => {
   };
 
   const processUpload = async () => {
-    if (!walletAddress) {
+    if (!walletAddress || !currentAccount) {
       alert("Please connect your Sui Wallet first to sign the upload transaction.");
       return;
     }
-    const adapter = { signAndExecuteTransactionBlock };
+    
+    // Get the connected wallet to use its signing features directly
+    const connectedWallet = wallets.find(w => w.accounts.some(acc => acc.address === walletAddress));
+    if (!connectedWallet) {
+      alert("Wallet not found. Please reconnect your wallet.");
+      return;
+    }
+    
+    // Create adapter that uses wallet's signAndExecuteTransactionBlock directly
+    const adapter = {
+      signAndExecuteTransactionBlock: async (params: any) => {
+        // Extract transactionBlock from params (could be transactionBlock or transaction)
+        const transactionBlock = params.transactionBlock || params.transaction || params;
+        
+        if (connectedWallet.features['sui:signAndExecuteTransactionBlock']) {
+          // Wallet's signAndExecuteTransactionBlock expects { transactionBlock, account, chain }
+          return await connectedWallet.features['sui:signAndExecuteTransactionBlock'].signAndExecuteTransactionBlock({
+            transactionBlock: transactionBlock,
+            account: currentAccount,
+            chain: connectedWallet.chains[0]?.id || 'sui:testnet',
+          });
+        }
+        // Fallback to dapp-kit hook
+        return await signAndExecuteTransactionBlock({
+          transactionBlock: transactionBlock,
+        });
+      }
+    };
 
     try {
       setUploadStep('ANALYZING');
@@ -165,8 +193,9 @@ const App: React.FC = () => {
 
       // 4. ON-CHAIN CERTIFICATION
       setUploadStep('CERTIFYING');
+      let certificationResult: { status: string; blobId: string; txDigest?: string; error?: string } | null = null;
       try {
-        await certifyBlobOnChain(
+        certificationResult = await certifyBlobOnChain(
           result.blobId,
           {
             title: analysis.title,
@@ -175,17 +204,38 @@ const App: React.FC = () => {
             sizeBytes: fullScript.length
           },
           adapter,
-          selectedNetwork
+          selectedNetwork,
+          walletAddress || undefined
         );
-        console.log("Blob certified on Sui!");
-      } catch (certErr) {
-        console.warn("Certification warning:", certErr);
-        // We continue even if certification fails, as the blob is uploaded
+        
+        // Only log success if actually certified
+        if (certificationResult.status === "Certified" && certificationResult.txDigest) {
+          console.log("✅ Blob certified on Sui!", certificationResult);
+        } else {
+          console.warn("⚠️ Certification status:", certificationResult.status, certificationResult.error || "");
+          if (certificationResult.error?.includes('gas') || certificationResult.error?.includes('Insufficient')) {
+            alert(`⚠️ Certification Failed: ${certificationResult.error}\n\nYour data is stored on Walrus, but on-chain certification requires SUI for gas fees. Please add more SUI to your wallet and try again.`);
+          }
+        }
+      } catch (certErr: any) {
+        console.error("Certification error:", certErr);
+        certificationResult = {
+          status: "Stored (certification failed)",
+          blobId: result.blobId,
+          error: certErr.message || "Unknown error"
+        };
+        if (certErr.message?.includes('gas') || certErr.message?.includes('No valid gas coins')) {
+          alert(`⚠️ Certification Failed: Insufficient SUI for gas fees.\n\nYour data is stored on Walrus, but on-chain certification requires SUI for transaction fees. Please add more SUI to your wallet.`);
+        }
       }
 
       // 5. Create Blob Object (Metadata wrapper for Marketplace)
+      // Use transaction digest as the main verifiable ID, fallback to Walrus blob ID
+      const verifiableId = certificationResult?.txDigest || result.blobId;
       const newBlob: DataBlob = {
-        id: result.blobId, 
+        id: verifiableId, // Main ID: transaction digest if certified, otherwise Walrus blob ID
+        walrusBlobId: result.blobId, // Store original Walrus ID separately
+        txDigest: certificationResult?.txDigest, // Store transaction digest
         name: analysis.title,
         description: analysis.description,
         size: `${(fullScript.length / 1024).toFixed(2)} KB`,
@@ -194,7 +244,7 @@ const App: React.FC = () => {
         timestamp: new Date().toISOString(),
         dataPoints: currentSessionData.length,
         sentimentScore: Math.floor(Math.random() * 100),
-        status: 'LISTED',
+        status: certificationResult?.txDigest ? 'LISTED' : 'MINTED', // LISTED if certified, MINTED if not
         owner: walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : '0xME...YOU'
       };
 
@@ -445,30 +495,14 @@ const App: React.FC = () => {
               <div className="flex justify-between"><span>PACKETS:</span> <span className="text-white">{currentSessionData.length}</span></div>
             </div>
             
-            {/* Network Selector */}
+            {/* Network Selector - Testnet Only */}
             <div className="space-y-2">
                <label className="text-xs font-mono text-slate-500 block">DESTINATION NETWORK</label>
-               <div className="flex gap-2 bg-slate-900 p-1 rounded-lg border border-slate-700">
-                  <button 
-                    onClick={() => setSelectedNetwork('TESTNET')}
-                    className={`flex-1 py-2 rounded flex items-center justify-center gap-2 text-xs font-bold transition-colors ${selectedNetwork === 'TESTNET' ? 'bg-brand-blue text-brand-pink shadow' : 'text-slate-500 hover:text-white'}`}
-                  >
-                     <Globe className="w-3 h-3" />
-                     Testnet (Free)
-                  </button>
-                  <button 
-                    onClick={() => setSelectedNetwork('MAINNET')}
-                    className={`flex-1 py-2 rounded flex items-center justify-center gap-2 text-xs font-bold transition-colors ${selectedNetwork === 'MAINNET' ? 'bg-brand-green text-brand-blue shadow' : 'text-slate-500 hover:text-white'}`}
-                  >
-                     <Database className="w-3 h-3" />
-                     Mainnet (Prod)
-                  </button>
+               <div className="bg-slate-900 p-3 rounded-lg border border-slate-700 flex items-center justify-center gap-2">
+                  <Globe className="w-4 h-4 text-brand-blue" />
+                  <span className="text-sm font-bold text-white">Testnet (Free)</span>
+                  <span className="text-[10px] text-slate-500 ml-2">Mainnet coming soon</span>
                </div>
-               {selectedNetwork === 'MAINNET' && (
-                 <p className="text-[10px] text-yellow-500 flex items-center gap-1">
-                   <AlertTriangle className="w-3 h-3" /> Warning: Mainnet usually requires SUI tokens & signed transaction.
-                 </p>
-               )}
             </div>
             
             <p className="text-sm text-slate-300">
@@ -522,7 +556,11 @@ const App: React.FC = () => {
             </div>
             <div>
               <h4 className="text-xl font-bold text-white">Upload Complete</h4>
-              <p className="text-slate-400 text-sm mt-2">Data Blob stored on Walrus & Certified on Sui.</p>
+              <p className="text-slate-400 text-sm mt-2">
+                {mintedBlob.txDigest 
+                  ? 'Data Blob stored on Walrus & Certified on Sui blockchain.' 
+                  : 'Data Blob stored on Walrus. On-chain certification skipped.'}
+              </p>
             </div>
             
             <div className="bg-slate-800/50 border border-dashed border-slate-600 p-4 rounded-xl text-left relative overflow-hidden">
@@ -533,13 +571,38 @@ const App: React.FC = () => {
               <div className="relative z-10">
                 <div className="flex items-center gap-2 mb-3">
                   <Award className="w-4 h-4 text-brand-accent" />
-                  <span className="text-xs font-bold text-white">ON-CHAIN CERTIFIED</span>
+                  <span className="text-xs font-bold text-white">
+                    {mintedBlob.txDigest ? 'ON-CHAIN CERTIFIED' : 'STORED ON WALRUS'}
+                  </span>
                 </div>
                 
-                <div className="text-[10px] text-slate-500 font-mono mb-1">WALRUS BLOB ID</div>
-                <div className="font-mono text-brand-accent text-xs break-all bg-slate-900/50 p-2 rounded border border-slate-700/50 mb-3 select-all">
+                <div className="text-[10px] text-slate-500 font-mono mb-1">
+                  {mintedBlob.txDigest ? 'TRANSACTION DIGEST (Verifiable on Sui)' : 'WALRUS BLOB ID'}
+                </div>
+                <div className="font-mono text-brand-accent text-xs break-all bg-slate-900/50 p-2 rounded border border-slate-700/50 mb-2 select-all">
                   {mintedBlob.id}
                 </div>
+                
+                {mintedBlob.txDigest && (
+                  <a
+                    href={`https://testnet.suivision.xyz/txblock/${mintedBlob.txDigest}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-brand-blue hover:text-brand-pink flex items-center gap-1 mb-3 transition-colors"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    View on SuiVision Explorer
+                  </a>
+                )}
+                
+                {mintedBlob.walrusBlobId && mintedBlob.walrusBlobId !== mintedBlob.id && (
+                  <div className="mt-2 pt-2 border-t border-slate-700/50">
+                    <div className="text-[10px] text-slate-500 font-mono mb-1">WALRUS STORAGE ID</div>
+                    <div className="font-mono text-slate-400 text-[10px] break-all bg-slate-900/30 p-1.5 rounded border border-slate-700/30 select-all">
+                      {mintedBlob.walrusBlobId}
+                    </div>
+                  </div>
+                )}
                 
                 <div className="flex justify-between items-end">
                   <div>
