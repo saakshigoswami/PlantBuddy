@@ -44,6 +44,8 @@ const App: React.FC = () => {
   const [currentSessionData, setCurrentSessionData] = useState<PlantDataPoint[]>([]);
   const [mintedBlob, setMintedBlob] = useState<DataBlob | null>(null);
   const [blobScript, setBlobScript] = useState<string>("");
+  const [hasSessionData, setHasSessionData] = useState(false);
+  const [sessionDataForMint, setSessionDataForMint] = useState<PlantDataPoint[]>([]);
   
   // Walrus Configuration
   const [selectedNetwork, setSelectedNetwork] = useState<WalrusNetwork>('TESTNET');
@@ -117,6 +119,7 @@ const App: React.FC = () => {
     setIsModalOpen(true);
     setUploadStep('IDLE');
     setMintedBlob(null);
+    setHasSessionData(false); // Clear after opening modal
     setBlobScript("");
   };
 
@@ -277,7 +280,13 @@ const App: React.FC = () => {
       case ViewMode.HOME:
         return <LandingPage onStart={() => setView(ViewMode.DEVICE)} />;
       case ViewMode.DEVICE:
-        return <DeviceMonitor onSaveSession={handleSaveSession} />;
+        return <DeviceMonitor 
+          onSaveSession={handleSaveSession} 
+          onSessionDataChange={(data) => {
+            setHasSessionData(data.length > 0);
+            setSessionDataForMint(data);
+          }}
+        />;
       case ViewMode.MARKETPLACE:
         return <DataMarketplace listings={marketplaceListings} />;
       default:
@@ -345,6 +354,24 @@ const App: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2">
+              {/* Mint Button - Always visible and highlighted in DEVICE view */}
+              {view === ViewMode.DEVICE && (
+                <button 
+                  onClick={() => {
+                    if (!hasSessionData || sessionDataForMint.length === 0) {
+                      alert('⚠️ Warning: No session data found. Please start a conversation in Talk Mode first to generate data before minting to Walrus.');
+                      return;
+                    }
+                    handleSaveSession(sessionDataForMint);
+                  }}
+                  className="px-3 py-2 rounded-lg text-xs font-mono font-bold border transition-all flex items-center gap-2 bg-sky-400/10 text-sky-400 border-sky-400/20 hover:bg-sky-400 hover:text-slate-900"
+                  title="Mint session data to Walrus"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span className="hidden sm:inline">MINT TO WALRUS</span>
+                </button>
+              )}
+              
               {/* Settings / Lock */}
               <button 
                 onClick={() => setIsSettingsOpen(true)}

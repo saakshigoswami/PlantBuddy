@@ -18,6 +18,7 @@ declare global {
 
 interface DeviceMonitorProps {
   onSaveSession: (data: PlantDataPoint[]) => void;
+  onSessionDataChange?: (data: PlantDataPoint[]) => void;
 }
 
 // Initial dummy data for the chart
@@ -168,7 +169,7 @@ class BioSynth {
 }
 
 
-const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
+const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession, onSessionDataChange }) => {
   const [isRecording, setIsRecording] = useState(false);
   const [chartData, setChartData] = useState(INITIAL_DATA);
   
@@ -222,6 +223,11 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  
+  // Notify parent when session data changes
+  useEffect(() => {
+    onSessionDataChange?.(sessionData);
+  }, [sessionData, onSessionDataChange]);
   
   // Serial Monitor State
   const [rawSerialBuffer, setRawSerialBuffer] = useState<string[]>([]);
@@ -446,7 +452,9 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
   
   const handleModeSwitch = (mode: 'TALK' | 'MUSIC') => {
       setInteractionMode(mode);
+      // Clear messages when switching to MUSIC mode
       if (mode === 'MUSIC') {
+          setMessages([]);
           // Resume Audio Context on click
           if (!synthRef.current?.ctx) synthRef.current?.init();
           synthRef.current?.resume();
@@ -851,7 +859,7 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
            <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
               <button
                  onClick={() => handleModeSwitch('TALK')}
-                 className={`flex-1 flex items-center justify-center gap-2 py-1.5 rounded-md text-xs font-bold transition-all ${interactionMode === 'TALK' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                 className={`flex-1 flex items-center justify-center gap-2 py-1.5 rounded-md text-xs font-bold transition-all ${interactionMode === 'TALK' ? 'bg-pink-400 text-slate-900 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
               >
                  <MessageCircle className="w-3 h-3" />
                  TALK MODE
@@ -897,8 +905,8 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
             <div className="absolute inset-0 bg-pink-400/10 animate-pulse pointer-events-none z-0" />
           )}
           
-          {/* Touch hint when no device connected */}
-          {!isConnected && messages.length === 0 && (
+          {/* Touch hint when no device connected - Only show in MUSIC mode */}
+          {!isConnected && interactionMode === 'MUSIC' && messages.length === 0 && (
             <div className="absolute top-4 left-0 right-0 flex flex-col items-center text-slate-500 opacity-90 pointer-events-none z-10 px-4">
               <div className="flex flex-col items-center gap-3">
                 {/* Plant and Music Emoji Row */}
@@ -914,9 +922,7 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
                       }}
                     />
                   </div>
-                  {interactionMode === 'MUSIC' && (
-                    <span className="text-xl opacity-80 -ml-4">🎵</span>
-                  )}
+                  <span className="text-xl opacity-80 -ml-4">🎵</span>
                 </div>
                 
                 {/* Text Below */}
@@ -935,31 +941,20 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
               </div>
             </div>
           )}
-           {/* Mint Button if Data exists */}
-           {sessionData.length > 0 && (
-              <button 
-                onClick={() => onSaveSession(sessionData)}
-                className="w-full py-2 mb-2 bg-sky-400/10 text-sky-400 font-mono text-xs border border-sky-400/20 rounded-lg hover:bg-sky-400 hover:text-slate-900 flex items-center justify-center gap-2"
-              >
-                <Save className="w-3 h-3" />
-                MINT SESSION DATA TO WALRUS
-              </button>
-           )}
-           
           {/* Visual feedback overlay when touching */}
           {isSimulatedTouching && (
             <div className="absolute inset-0 bg-pink-400/10 animate-pulse pointer-events-none z-0" />
           )}
           
-          {messages.length === 0 && isConnected && (
+          {messages.length === 0 && isConnected && interactionMode === 'TALK' && (
             <div className="h-full flex flex-col items-center justify-center text-slate-600 opacity-50">
-              {interactionMode === 'MUSIC' ? <Music className="w-12 h-12 mb-2 animate-pulse" /> : <Leaf className="w-12 h-12 mb-2" />}
+              <Leaf className="w-12 h-12 mb-2" />
               <p className="text-sm font-mono text-center">
-                {interactionMode === 'MUSIC' ? "Touch plant to play music." : "Touch plant to chat."}
+                Touch plant to chat.
               </p>
             </div>
           )}
-          {messages.map((msg, idx) => (
+          {interactionMode === 'TALK' && messages.map((msg, idx) => (
             <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} relative z-10`}>
               <div className={`max-w-[85%] p-3 rounded-2xl text-sm leading-relaxed ${
                 msg.role === 'user' 
