@@ -934,7 +934,7 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession, onSessionD
                 <div className="flex flex-col items-center gap-2">
                   <div className="bg-slate-900/90 backdrop-blur-sm px-4 py-2 rounded-lg border border-slate-700/50 shadow-lg">
                     <p className="text-sm font-mono text-center text-white font-semibold whitespace-nowrap">
-                      Tap on me to see the demo data
+                      Tap on me to play demo plant piano
                     </p>
                   </div>
                   <div className="bg-pink-500/20 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-pink-400/30 shadow-md">
