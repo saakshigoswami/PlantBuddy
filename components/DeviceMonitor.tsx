@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { LineChart, Line, ResponsiveContainer, YAxis, XAxis, Tooltip, ReferenceLine } from 'recharts';
-import { Mic, Play, Pause, Save, Activity, Wifi, Leaf, Volume2, MicOff, Send, Terminal, Cpu, Settings, Usb, ToggleLeft, ToggleRight, AlertCircle, VolumeX, Music, MessageCircle, Sliders } from 'lucide-react';
+import { Mic, Play, Pause, Save, Activity, Wifi, Leaf, Volume2, MicOff, Send, Terminal, Cpu, Settings, Usb, ToggleLeft, ToggleRight, AlertCircle, VolumeX, Music, MessageCircle, Sliders, Info } from 'lucide-react';
 import { generatePlantResponse } from '../services/geminiService';
 import { PlantDataPoint, ChatMessage } from '../types';
 
@@ -701,6 +701,25 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
             </div>
           </div>
           
+          {/* Device Not Connected Message - Welcome Note */}
+          {!isConnected && (
+            <div className="mb-4 p-4 bg-gradient-to-r from-sky-500/10 via-pink-500/10 to-sky-500/10 border-l-4 border-sky-400 rounded-lg shadow-lg backdrop-blur-sm relative pr-24">
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0 mt-0.5">
+                  <Info className="w-5 h-5 text-sky-400" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-sm font-bold text-sky-300 mb-2 font-mono uppercase tracking-wide">
+                    Welcome to PlantBuddy Demo
+                  </h3>
+                  <p className="text-xs font-mono text-slate-200 leading-relaxed">
+                    PlantBuddy IOT device not connected to your system currently. Please select music mode to listen demo sound and tap on plant, keep the threshold at 47 for better experience
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+          
           {/* Graph */}
           <div className="h-64 w-full relative z-0 mb-4">
              <div className="absolute top-0 left-0 z-10 text-[10px] font-mono text-slate-500 space-y-1 bg-slate-900/80 p-2 rounded border border-slate-800 pointer-events-none">
@@ -750,7 +769,7 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
           </div>
 
           {/* Live Value Display (Background) */}
-          <div className="absolute top-20 right-6 text-right pointer-events-none z-0">
+          <div className="absolute top-32 right-6 text-right pointer-events-none z-0">
              <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
                 RAW VALUE
              </div>
@@ -880,22 +899,40 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
           
           {/* Touch hint when no device connected */}
           {!isConnected && messages.length === 0 && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 opacity-90 pointer-events-none z-10">
-              <div className={`mb-4 transition-transform ${isSimulatedTouching ? 'scale-110' : 'scale-100'}`}>
-                <img 
-                  src="/assets/touch-plant.png" 
-                  alt="Touch Plant" 
-                  className={`w-48 h-48 object-contain ${isSimulatedTouching ? 'drop-shadow-[0_0_20px_rgba(255,192,203,0.6)]' : ''}`}
-                  onError={(e) => {
-                    // Fallback to icon if image doesn't load
-                    (e.target as HTMLImageElement).style.display = 'none';
-                  }}
-                />
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 opacity-90 pointer-events-none z-10 px-4">
+              <div className="flex flex-col items-center gap-6 mb-6">
+                {/* Plant and Music Emoji Row */}
+                <div className="flex items-center gap-0">
+                  <div className={`transition-transform ${isSimulatedTouching ? 'scale-110' : 'scale-100'}`}>
+                    <img 
+                      src="/assets/touch-plant.png" 
+                      alt="Touch Plant" 
+                      className={`w-48 h-48 object-contain ${isSimulatedTouching ? 'drop-shadow-[0_0_20px_rgba(255,192,203,0.6)]' : ''}`}
+                      onError={(e) => {
+                        // Fallback to icon if image doesn't load
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
+                  </div>
+                  {interactionMode === 'MUSIC' && (
+                    <span className="text-xl opacity-80 -ml-4">🎵</span>
+                  )}
+                </div>
+                
+                {/* Text Below */}
+                <div className="flex flex-col items-center gap-2">
+                  <div className="bg-slate-900/90 backdrop-blur-sm px-4 py-2 rounded-lg border border-slate-700/50 shadow-lg">
+                    <p className="text-sm font-mono text-center text-white font-semibold whitespace-nowrap">
+                      Tap on me to see the demo data
+                    </p>
+                  </div>
+                  <div className="bg-pink-500/20 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-pink-400/30 shadow-md">
+                    <p className="text-xs font-mono text-center text-pink-300 font-bold">
+                      Simulated touch for demo
+                    </p>
+                  </div>
+                </div>
               </div>
-              <p className="text-sm font-mono text-center mb-2 text-white flex items-center gap-2 justify-center">
-                {interactionMode === 'MUSIC' && <span className="text-2xl">🎵</span>}
-                Tap on me to see the demo data
-              </p>
             </div>
           )}
            {/* Mint Button if Data exists */}
@@ -912,25 +949,6 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession }) => {
           {/* Visual feedback overlay when touching */}
           {isSimulatedTouching && (
             <div className="absolute inset-0 bg-pink-400/10 animate-pulse pointer-events-none z-0" />
-          )}
-          
-          {/* Touch hint when no device connected */}
-          {!isConnected && messages.length === 0 && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 opacity-60 pointer-events-none z-10">
-              <div className={`mb-4 transition-transform ${isSimulatedTouching ? 'scale-110' : 'scale-100'}`}>
-                {interactionMode === 'MUSIC' ? (
-                  <Music className={`w-16 h-16 ${isSimulatedTouching ? 'text-pink-400 animate-pulse' : 'text-slate-500'}`} />
-                ) : (
-                  <Leaf className={`w-16 h-16 ${isSimulatedTouching ? 'text-pink-400 animate-pulse' : 'text-slate-500'}`} />
-                )}
-              </div>
-              <p className="text-sm font-mono text-center mb-2">
-                {interactionMode === 'MUSIC' ? "Click to play music" : "Click to chat with the plant"}
-              </p>
-              <p className="text-xs font-mono text-slate-600">
-                (Simulated touch - no device needed)
-              </p>
-            </div>
           )}
           
           {messages.length === 0 && isConnected && (
