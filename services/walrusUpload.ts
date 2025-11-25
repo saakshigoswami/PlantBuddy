@@ -152,12 +152,11 @@ export async function certifyBlobOnChain(
       target: `${PLANTBUDDY_PACKAGE_ID}::plantbuddy_blob::certify_blob`,
       arguments: [
         txb.object(REGISTRY_ID), // Registry object
-        txb.pure(blobId), // walrus_blob_id
-        txb.pure(metadata.title), // title
-        txb.pure(metadata.description), // description
-        txb.pure(metadata.dataPoints), // data_points
-        txb.pure(metadata.sizeBytes), // size_bytes
-        txb.pure(network), // network
+        txb.pure.string(blobId), // walrus_blob_id
+        txb.pure.string(metadata.title), // title
+        txb.pure.string(metadata.description), // description
+        txb.pure.u64(metadata.dataPoints), // data_points
+        txb.pure.u64(metadata.sizeBytes), // size_bytes
       ],
     });
 

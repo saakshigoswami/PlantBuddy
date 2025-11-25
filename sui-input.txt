@@ -1,0 +1,5 @@
+y
+https://fullnode.testnet.sui.io:443
+testnet
+0
+
