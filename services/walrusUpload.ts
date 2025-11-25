@@ -2,18 +2,27 @@
 // src/services/walrusUpload.ts
 // Walrus Upload Service (REST API Implementation)
 
-// Configuration for Walrus Networks
-// We use the TESTNET endpoints which are generally more stable for hackathons
-const WALRUS_CONFIG = {
-  TESTNET: {
-    PUBLISHER: "https://publisher.walrus-testnet.walrus.space",
-    AGGREGATOR: "https://aggregator.walrus-testnet.walrus.space"
-  },
-  MAINNET: {
-    PUBLISHER: "https://publisher.walrus.space",
-    AGGREGATOR: "https://aggregator.walrus.space"
-  }
+import type { WalrusNetwork } from './walrusService';
+
+const WALRUS_AGGREGATOR = {
+  TESTNET: 'https://aggregator.walrus-testnet.walrus.space',
+  MAINNET: 'https://aggregator.walrus.space'
 };
+
+const WALRUS_PUBLISHERS: Record<WalrusNetwork, string[]> = {
+  TESTNET: [
+    'https://publisher.walrus-testnet.walrus.space',
+    'https://walrus-testnet-publisher.nodes.guru',
+    'https://walrus-testnet-publisher.everstake.one',
+    'https://publisher.testnet.walrus.atalma.io',
+    'https://walrus-testnet-publisher.stakely.io',
+  ],
+  MAINNET: [
+    'https://publisher.walrus.space',
+  ]
+};
+
+const EPOCHS = 1;
 
 /**
  * Upload session data to Walrus via the Publisher REST API.
@@ -26,66 +35,60 @@ const WALRUS_CONFIG = {
 export async function uploadSessionViaWalrusSDK(
   sessionData: any, 
   walletAdapter: any, 
-  network: 'TESTNET' | 'MAINNET' = 'TESTNET'
+  network: WalrusNetwork = 'TESTNET'
 ) {
-  const json = typeof sessionData === "string" ? sessionData : JSON.stringify(sessionData);
-  // Ensure we fallback to TESTNET if an invalid network is passed
-  const config = WALRUS_CONFIG[network] || WALRUS_CONFIG.TESTNET;
-  
+  const payload = typeof sessionData === "string" ? sessionData : JSON.stringify(sessionData);
+  const publishers = WALRUS_PUBLISHERS[network] || WALRUS_PUBLISHERS.TESTNET;
+
   console.log(`Initiating upload to Walrus ${network}...`);
-  
-  try {
-      // 1. PUT to Publisher
-      // We use epochs=1 for short-term storage default.
-      // IMPORTANT: Added Content-Type header to satisfy CORS preflight
-      const response = await fetch(`${config.PUBLISHER}/v1/store?epochs=1`, {
-        method: "PUT",
+
+  for (let i = 0; i < publishers.length; i++) {
+    const publisher = publishers[i];
+    const url = `${publisher}/v1/blobs?epochs=${EPOCHS}`;
+    try {
+      console.log(`Attempting Walrus publisher ${i + 1}/${publishers.length}: ${url}`);
+      const response = await fetch(url, {
+        method: 'PUT',
         headers: {
-            "Content-Type": "application/json"
+          'Content-Type': 'application/json'
         },
-        body: json,
+        body: payload
       });
 
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(`Walrus Publisher Error: ${response.status} ${text}`);
+        console.warn(`Publisher ${publisher} failed: ${response.status} ${text}`);
+        continue;
       }
 
-      // 2. Parse Response
-      const data = await response.json();
-      
-      let blobId: string | undefined;
-      let certificate: any | undefined;
-
-      // Handle different response structures from Walrus versions
-      if (data.newlyCreated) {
-        blobId = data.newlyCreated.blobObject.blobId;
-        certificate = data.newlyCreated.encodedSize; 
-      } else if (data.alreadyCertified) {
-        blobId = data.alreadyCertified.blobId;
-      }
+      const result = await response.json();
+      const blobId = result.newlyCreated?.blobObject?.blobId ||
+                     result.newlyCreated?.blobId ||
+                     result.alreadyCertified?.blobId ||
+                     result.blobId;
 
       if (!blobId) {
-        console.error("Unexpected Walrus Response:", data);
-        throw new Error("Upload successful but no Blob ID returned.");
+        console.error("Unexpected Walrus response:", result);
+        throw new Error("Upload successful but no blob ID returned.");
       }
+
+      const walrusUrl = `${WALRUS_AGGREGATOR[network] || WALRUS_AGGREGATOR.TESTNET}/v1/${blobId}`;
 
       return { 
         blobId, 
-        certificate, 
-        raw: data 
+        certificate: result.newlyCreated?.resourceOperation ?? null, 
+        walrusUrl,
+        raw: result 
       };
-
-  } catch (error: any) {
-      console.error("Walrus Upload Failed:", error);
-      
-      // Check for CORS/Network errors
-      if (error.name === 'TypeError' && error.message === 'Failed to fetch') {
-          throw new Error(`Network/CORS Error: Unable to reach Walrus ${network}. If you are on localhost, this might be a browser restriction. Try using a CORS extension or deploying the app.`);
+    } catch (error) {
+      console.error(`Walrus publisher ${publisher} error:`, error);
+      if (i === publishers.length - 1) {
+        throw new Error(`All Walrus upload attempts failed. Last error: ${error?.message || error}`);
       }
-      
-      throw error;
+    }
   }
+
+  throw new Error("Walrus upload failed");
 }
 
 /**
