@@ -108,56 +108,55 @@ export const generatePlantResponse = async (
       // Add current message
       fullPrompt += `User: ${contents[contents.length - 1].parts[0].text}\n\nPlantBuddy:`;
       
-      // Try using REST API directly as fallback if SDK fails
-      // First try the SDK with the simplest model
+      // First, try to list available models to see what we can use
+      let availableModels: string[] = [];
       try {
-        const model = genAI.getGenerativeModel({ 
-          model: 'gemini-1.5-flash',
-        });
-        
-        const result = await model.generateContent(fullPrompt);
-        const response = await result.response;
-        const text = response.text();
-        if (text) {
-          console.log("Success with gemini-1.5-flash via SDK");
-          return text;
+        const listResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+        if (listResponse.ok) {
+          const listData = await listResponse.json();
+          availableModels = (listData.models || []).map((m: any) => m.name?.replace('models/', '') || m.name).filter(Boolean);
+          console.log("Available models:", availableModels);
         }
-      } catch (sdkError: any) {
-        console.log("SDK failed, trying REST API directly...", sdkError.message);
-        
-        // Fallback to REST API
+      } catch (e) {
+        console.log("Could not list models, will try defaults");
+      }
+      
+      // Try different models - prioritize ones that support generateContent
+      const modelsToTry = availableModels.length > 0 
+        ? availableModels.filter(m => m.includes('gemini'))
+        : ['gemini-1.5-flash-latest', 'gemini-1.5-pro-latest', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro-latest', 'gemini-pro'];
+      
+      let lastError: any = null;
+      
+      for (const modelName of modelsToTry) {
         try {
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              contents: [{
-                parts: [{ text: fullPrompt }]
-              }],
-              generationConfig: {
-                temperature: 0.7,
-              }
-            })
+          console.log(`Trying model: ${modelName}`);
+          const model = genAI.getGenerativeModel({ 
+            model: modelName,
           });
           
-          if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(`API Error ${response.status}: ${JSON.stringify(errorData)}`);
-          }
-          
-          const data = await response.json();
-          const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          const result = await model.generateContent(fullPrompt);
+          const response = await result.response;
+          const text = response.text();
           if (text) {
-            console.log("Success with REST API");
+            console.log(`Success with ${modelName} via SDK`);
             return text;
           }
-        } catch (restError: any) {
-          console.error("REST API also failed:", restError);
-          throw restError;
+        } catch (sdkError: any) {
+          lastError = sdkError;
+          const errorMsg = sdkError.message || '';
+          // Skip if model doesn't support generateContent
+          if (errorMsg.includes('not supported for generateContent')) {
+            console.log(`${modelName} doesn't support generateContent, skipping`);
+            continue;
+          }
+          console.log(`${modelName} failed:`, errorMsg.slice(0, 100));
+          continue; // Try next model
         }
       }
+      
+      // If all SDK models fail, return a helpful error
+      throw lastError || new Error("No available Gemini models found. Please check your API key and model access.");
       
       return "I'm listening...";
     } catch (error: any) {
@@ -260,20 +259,52 @@ export const analyzeDatasetValue = async (
       }
     `;
 
-    // Use the official SDK for analysis
-    const model = genAI.getGenerativeModel({ 
-      model: 'gemini-1.5-flash',
-      generationConfig: {
-        responseMimeType: 'application/json',
+    // First, try to list available models
+    let availableModels: string[] = [];
+    try {
+      const listResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+      if (listResponse.ok) {
+        const listData = await listResponse.json();
+        availableModels = (listData.models || []).map((m: any) => m.name?.replace('models/', '') || m.name).filter(Boolean);
       }
-    });
+    } catch (e) {
+      // Ignore listing errors
+    }
     
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-    if (!text) throw new Error("No analysis generated");
+    // Use the official SDK for analysis - try different models
+    const modelsToTry = availableModels.length > 0 
+      ? availableModels.filter(m => m.includes('gemini'))
+      : ['gemini-1.5-flash-latest', 'gemini-1.5-pro-latest', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro-latest', 'gemini-pro'];
+    let lastError: any = null;
     
-    return JSON.parse(text);
+    for (const modelName of modelsToTry) {
+      try {
+        const model = genAI.getGenerativeModel({ 
+          model: modelName,
+          generationConfig: {
+            responseMimeType: 'application/json',
+          }
+        });
+        
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const text = response.text();
+        if (text) {
+          return JSON.parse(text);
+        }
+      } catch (err: any) {
+        lastError = err;
+        const errorMsg = err.message || '';
+        if (errorMsg.includes('not supported for generateContent')) {
+          continue; // Skip models that don't support this method
+        }
+        console.log(`Analysis model ${modelName} failed:`, errorMsg.slice(0, 100));
+        continue;
+      }
+    }
+    
+    // If all models fail, throw error
+    throw lastError || new Error("All model attempts failed for analysis");
   } catch (error) {
     console.error("Gemini Analysis Error:", error);
     return {
