@@ -17,7 +17,7 @@ import DeviceMonitor from './components/DeviceMonitor';
 import DataMarketplace from './components/DataMarketplace';
 import LandingPage from './components/LandingPage';
 import Modal from './components/Modal';
-import { Flower, Store, Wallet, Loader2, CheckCircle, UploadCloud, FileText, Database, Activity, Download, ExternalLink, Lock, AlertTriangle, Globe, LogOut, Home, Award } from 'lucide-react';
+import { Flower, Store, Wallet, Loader2, CheckCircle, UploadCloud, FileText, Database, Activity, Download, ExternalLink, Lock, AlertTriangle, Globe, LogOut, Home, Award, Coins } from 'lucide-react';
 
 // Walrus Network Type compatible with the new service logic
 type WalrusNetwork = 'TESTNET' | 'MAINNET';
@@ -634,7 +634,10 @@ const App: React.FC = () => {
                 <div className="flex justify-between items-end">
                   <div>
                     <div className="text-[10px] text-slate-500 font-mono mb-1">MARKET VALUE</div>
-                    <div className="font-bold text-white text-lg">{mintedBlob.price} SUI</div>
+                    <div className="flex items-center gap-2 font-bold text-white text-lg">
+                      <Coins className="w-5 h-5 text-yellow-400" />
+                      <span>⭐</span>
+                    </div>
                   </div>
                   <div className="text-right">
                     <div className="text-[10px] text-slate-500 font-mono mb-1">SIZE</div>

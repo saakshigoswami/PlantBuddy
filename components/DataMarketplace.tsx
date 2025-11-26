@@ -24,11 +24,11 @@ const DataMarketplace: React.FC<DataMarketplaceProps> = ({ listings }) => {
         <div className="flex justify-center gap-8 mt-4 font-mono text-sm text-brand-green">
           <div className="flex items-center gap-2">
              <Database className="w-4 h-4" />
-             <span>TOTAL VOL: 452k SUI</span>
+             <span>VERIFIED BLOBS: 12,405</span>
           </div>
           <div className="flex items-center gap-2">
              <ShieldCheck className="w-4 h-4" />
-             <span>VERIFIED BLOBS: 12,405</span>
+             <span>DECENTRALIZED STORAGE</span>
           </div>
         </div>
       </div>
@@ -45,8 +45,8 @@ const DataMarketplace: React.FC<DataMarketplaceProps> = ({ listings }) => {
         </div>
         <select className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-300 focus:outline-none">
           <option>Sort by: Newest</option>
-          <option>Price: High to Low</option>
           <option>Sentiment: High to Low</option>
+          <option>Data Points: High to Low</option>
         </select>
       </div>
 
@@ -95,7 +95,7 @@ const DataMarketplace: React.FC<DataMarketplaceProps> = ({ listings }) => {
               <div className="pt-4 border-t border-slate-800 flex items-center justify-between">
                 <div className="flex items-center gap-2 text-white font-bold text-lg">
                   <Coins className="w-5 h-5 text-yellow-400" />
-                  {blob.price} SUI
+                  <span>⭐</span>
                 </div>
                 <button 
                   disabled={blob.status === 'SOLD'}
