@@ -2,7 +2,7 @@
 // Use the official Google Generative AI SDK
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const HARDCODED_KEY = 'AIzaSyCvCwLoFMwCzy8agJT9N8R9xdnew7vbcZU';
+const HARDCODED_KEY = 'AIzaSyC3oU5S3qMW5bDQZKAYNNqpB4zzZvDle7o';
 
 // Helper to get the best available API Key
 const getApiKey = (): string | undefined => {
