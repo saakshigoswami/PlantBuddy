@@ -196,7 +196,7 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession, onSessionD
   const [selectedVoiceURI, setSelectedVoiceURI] = useState<string>('');
 
   // MODES: TALK (AI Voice) vs MUSIC (BioSynth)
-  const [interactionMode, setInteractionMode] = useState<'TALK' | 'MUSIC'>('TALK');
+  const [interactionMode, setInteractionMode] = useState<'TALK' | 'MUSIC'>('MUSIC');
   const synthRef = useRef<BioSynth | null>(null);
 
   // Arduino specific variables based on user code
@@ -701,7 +701,11 @@ const DeviceMonitor: React.FC<DeviceMonitorProps> = ({ onSaveSession, onSessionD
                <button 
                  onClick={connectSerial}
                  disabled={isConnected}
-                 className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-mono font-bold border transition-all cursor-pointer ${isConnected ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500' : 'bg-slate-800 text-slate-300 border-slate-600 hover:bg-slate-700'}`}
+                 className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-mono font-bold border transition-all cursor-pointer shadow-lg ${
+                   isConnected 
+                     ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500 shadow-emerald-500/20' 
+                     : 'bg-sky-400/20 text-sky-300 border-sky-400/50 hover:bg-sky-400/30 hover:border-sky-400 hover:text-white hover:shadow-sky-400/30'
+                 }`}
                >
                   {isConnected ? <Wifi className="w-3 h-3" /> : <Usb className="w-3 h-3" />}
                   {isConnected ? "CONNECTED" : "CONNECT DEVICE"}
