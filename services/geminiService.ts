@@ -2,8 +2,6 @@
 // Use the official Google Generative AI SDK
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const HARDCODED_KEY = 'AIzaSyC3oU5S3qMW5bDQZKAYNNqpB4zzZvDle7o';
-
 // Helper to get the best available API Key
 const getApiKey = (): string | undefined => {
   // 1. Check Local Storage (User override)
@@ -16,8 +14,8 @@ const getApiKey = (): string | undefined => {
     return envKey.trim();
   }
   
-  // 3. Fallback to provided key (for development only)
-  return HARDCODED_KEY;
+  // 3. No fallback - return undefined if no key is found
+  return undefined;
 };
 
 // System instruction: SOFT & GENTLE FRIEND

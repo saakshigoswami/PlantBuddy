@@ -52,17 +52,29 @@ const App: React.FC = () => {
 
   // API Key Settings
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  // Default to the provided key initially
-  const [geminiKey, setGeminiKey] = useState('AIzaSyC3oU5S3qMW5bDQZKAYNNqpB4zzZvDle7o');
-  const [hasKey, setHasKey] = useState(true);
+  // Get API key from environment variable or localStorage
+  const [geminiKey, setGeminiKey] = useState(() => {
+    // Check localStorage first
+    const local = localStorage.getItem('GEMINI_API_KEY');
+    if (local) return local;
+    // Fallback to environment variable
+    return import.meta.env.VITE_GEMINI_API_KEY || '';
+  });
+  const [hasKey, setHasKey] = useState(!!geminiKey);
 
   useEffect(() => {
     // Check if key exists on mount
     const local = localStorage.getItem('GEMINI_API_KEY');
+    const envKey = import.meta.env.VITE_GEMINI_API_KEY;
     if (local) {
       setGeminiKey(local);
+      setHasKey(true);
+    } else if (envKey) {
+      setGeminiKey(envKey);
+      setHasKey(true);
+    } else {
+      setHasKey(false);
     }
-    setHasKey(true);
   }, []);
 
   const startWalletConnection = async (wallet: WalletWithRequiredFeatures) => {
@@ -110,7 +122,10 @@ const App: React.FC = () => {
     } else {
        // Allow clearing key
        localStorage.removeItem('GEMINI_API_KEY');
-       setGeminiKey('AIzaSyC3oU5S3qMW5bDQZKAYNNqpB4zzZvDle7o');
+       // Fallback to environment variable if available
+       const envKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+       setGeminiKey(envKey);
+       setHasKey(!!envKey);
     }
   };
 
